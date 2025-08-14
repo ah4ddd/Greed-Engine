@@ -1,0 +1,7 @@
+streamlit
+pandas
+ccxt
+python-dotenv
+sqlalchemy
+flask
+flask-cors

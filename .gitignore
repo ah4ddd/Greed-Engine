@@ -1,0 +1,10 @@
+.env
+*.sqlite
+__pycache__/
+*.pyc
+database/
+tradebot.sqlite
+venv
+venv/
+database
+node_modules/
