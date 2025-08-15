@@ -46,32 +46,35 @@ function App() {
         <div className="app">
             <div className="sidebar">
                 <div className="logo">
-                    <h2>AlgoTrader Pro</h2>
-                    <span className="version">v2.0</span>
+                    <h2>Algorithmic Trading</h2>
                 </div>
                 <nav className="nav-menu">
                     <button
                         className={activeTab === 'dashboard' ? 'nav-item active' : 'nav-item'}
                         onClick={() => setActiveTab('dashboard')}
                     >
+                        <span className="nav-icon">■</span>
                         Dashboard
                     </button>
                     <button
                         className={activeTab === 'controls' ? 'nav-item active' : 'nav-item'}
                         onClick={() => setActiveTab('controls')}
                     >
+                        <span className="nav-icon">▲</span>
                         Bot Controls
                     </button>
                     <button
                         className={activeTab === 'trades' ? 'nav-item active' : 'nav-item'}
                         onClick={() => setActiveTab('trades')}
                     >
+                        <span className="nav-icon">≡</span>
                         Trade History
                     </button>
                     <button
                         className={activeTab === 'settings' ? 'nav-item active' : 'nav-item'}
                         onClick={() => setActiveTab('settings')}
                     >
+                        <span className="nav-icon">⚙</span>
                         Settings
                     </button>
                 </nav>
@@ -80,17 +83,16 @@ function App() {
             <div className="main-content">
                 <div className="header">
                     <div className="header-left">
-                        <h1>Trading Terminal</h1>
-                        <span className="header-subtitle">Professional Algorithmic Trading</span>
+                        <h1>GREED ENGINE <span className="header-separator">//</span> TERMINAL</h1>
                     </div>
                     <div className="header-right">
                         <div className="trading-pair">{settings.symbol}</div>
                         <div className={`status-badge ${botStatus.running ? 'active' : 'inactive'}`}>
                             <div className="status-dot"></div>
-                            <span>{botStatus.running ? 'Trading Active' : 'Bot Stopped'}</span>
+                            <span>{botStatus.running ? 'ACTIVE' : 'INACTIVE'}</span>
                         </div>
                         <div className="mode-badge">
-                            {settings.real_mode ? 'LIVE TRADING' : 'PAPER TRADING'}
+                            {settings.real_mode ? 'LIVE' : 'PAPER'}
                         </div>
                     </div>
                 </div>
