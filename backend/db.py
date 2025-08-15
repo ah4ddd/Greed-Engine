@@ -48,11 +48,18 @@ def update_trade_pnl(trade_id, exit_price, pnl, status):
 
 def get_account_balance():
     session = Session()
-    trades = session.query(Trade).all()
+    trades = session.query(Trade).filter(Trade.status == 'EXECUTED').all()
     total_pnl = sum(trade.pnl or 0 for trade in trades)
-    current_balance = get_balance_db() + total_pnl
+    starting_balance = 10000.0
+    current_balance = starting_balance + total_pnl
     session.close()
-    return {"balance": current_balance, "total_pnl": total_pnl}
+
+    return {
+        "balance": current_balance,
+        "total_pnl": total_pnl,
+        "starting_balance": starting_balance,
+        "total_trades": len(trades)
+    }
 
 def get_trade_history():
     session = Session()
