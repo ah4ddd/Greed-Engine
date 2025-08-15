@@ -8,9 +8,11 @@ function TradeHistory({ trades }) {
         const winningTrades = closedTrades.filter(trade => trade.pnl > 0);
         const losingTrades = closedTrades.filter(trade => trade.pnl < 0);
 
-        // Fix: Calculate total trading volume, not accumulated capital
-        const totalTradingVolume = closedTrades.reduce((sum, trade) => sum + (trade.price * trade.size), 0);
         const totalPnL = closedTrades.reduce((sum, trade) => sum + (trade.pnl || 0), 0);
+
+        // Calculate current account balance (same as dashboard)
+        const startingBalance = 10000;
+        const currentBalance = startingBalance + totalPnL;
 
         // Calculate profit factor properly
         const totalWins = winningTrades.reduce((sum, trade) => sum + trade.pnl, 0);
@@ -21,7 +23,7 @@ function TradeHistory({ trades }) {
             totalTrades: closedTrades.length,
             winningTrades: winningTrades.length,
             losingTrades: losingTrades.length,
-            totalCapital: totalTradingVolume, // This is total volume traded
+            currentBalance: currentBalance, // Fixed: Added currentBalance
             totalPnL: totalPnL,
             profitFactor: totalLosses > 0 ? (totalWins / totalLosses).toFixed(2) : 'N/A'
         };
@@ -55,8 +57,8 @@ function TradeHistory({ trades }) {
                     <span className="stat-value">{stats.winRate}%</span>
                 </div>
                 <div className="stat-card">
-                    <span className="stat-label">Trading Volume</span>
-                    <span className="stat-value">${stats.totalCapital.toFixed(0)}</span>
+                    <span className="stat-label">Account Balance</span>
+                    <span className="stat-value">${stats.currentBalance.toFixed(2)}</span>
                 </div>
                 <div className="stat-card">
                     <span className="stat-label">Profit Factor</span>
@@ -89,7 +91,7 @@ function TradeHistory({ trades }) {
                         const roi = capitalUsed > 0 ? ((trade.pnl / capitalUsed) * 100) : 0;
 
                         return (
-                            <div key={index} className={`table-row ${trade.pnl >= 0 ? 'profit-row' : 'loss-row'}`}>
+                            <div key={trade.id || index} className={`table-row ${trade.pnl >= 0 ? 'profit-row' : 'loss-row'}`}>
                                 <span className="symbol-cell">{trade.symbol}</span>
                                 <span className={`side-cell ${trade.side}`}>
                                     <span className="side-indicator"></span>

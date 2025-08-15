@@ -2017,3 +2017,29 @@ body {
 .table-row.loss-row:hover {
     background: rgba(255, 107, 107, 0.08);
 }
+
+/* Recent Signals Enhancement */
+.signal-pill {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    background: #1a1b23;
+    border-radius: 20px;
+    border: 1px solid #2d2f36;
+    font-size: 12px;
+    flex-wrap: wrap;
+}
+
+.signal-time {
+    font-size: 10px;
+    color: #8b949e;
+    font-weight: 400;
+}
+
+/* Make sure signals container can wrap */
+.signals-container {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}

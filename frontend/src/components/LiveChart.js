@@ -265,13 +265,14 @@ function LiveChart({ symbol, trades }) {
                 </div>
             </div>
 
-            {/* Recent Signals - FIXED P&L DISPLAY */}
+            {/* Recent Signals - FIXED TO SHOW ACTUAL LATEST TRADES */}
             {trades && trades.length > 0 && (
                 <div className="recent-signals">
                     <h4>Recent Signals</h4>
                     <div className="signals-container">
-                        {trades.slice(-4).map((trade, index) => (
-                            <div key={index} className={`signal-pill ${trade.side} ${trade.pnl < 0 ? 'loss-signal' : 'profit-signal'}`}>
+                        {/* Use the trades passed from Dashboard (already sorted latest first) */}
+                        {trades.slice(0, 4).map((trade, index) => (
+                            <div key={trade.id || `${trade.timestamp}-${index}`} className={`signal-pill ${trade.side} ${trade.pnl < 0 ? 'loss-signal' : 'profit-signal'}`}>
                                 <span className="signal-icon">
                                     {trade.side === 'buy' ? '🟢' : '🔴'}
                                 </span>
@@ -281,12 +282,14 @@ function LiveChart({ symbol, trades }) {
                                 <span className={`signal-pnl ${trade.pnl >= 0 ? 'profit' : 'loss'}`}>
                                     {trade.pnl >= 0 ? `+$${trade.pnl.toFixed(2)}` : `$${trade.pnl.toFixed(2)}`}
                                 </span>
+                                <span className="signal-time">
+                                    {new Date(trade.timestamp).toLocaleTimeString()}
+                                </span>
                             </div>
                         ))}
                     </div>
                 </div>
             )}
-
         </div>
     );
 }
