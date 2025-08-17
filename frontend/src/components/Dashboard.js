@@ -3,21 +3,39 @@ import LiveChart from './LiveChart';
 
 function Dashboard({ balance, trades, currentSymbol = 'BTC/USDT' }) {
 
-    // Calculate stats EXACTLY like trade history does
+    // Calculate comprehensive stats including Risk-Reward Ratio
     const calculateStats = () => {
         if (trades.length === 0) {
             return {
                 totalPnL: 0,
                 winRate: 0,
                 totalTrades: 0,
-                currentBalance: 10000
+                currentBalance: 10000,
+                riskRewardRatio: 0,
+                profitFactor: 0,
+                averageWin: 0,
+                averageLoss: 0
             };
         }
 
         const executedTrades = trades.filter(trade => trade.status === 'EXECUTED');
         const winningTrades = executedTrades.filter(trade => trade.pnl > 0);
+        const losingTrades = executedTrades.filter(trade => trade.pnl < 0);
+
         const totalPnL = executedTrades.reduce((sum, trade) => sum + (trade.pnl || 0), 0);
         const winRate = executedTrades.length > 0 ? ((winningTrades.length / executedTrades.length) * 100) : 0;
+
+        // Calculate averages
+        const totalWins = winningTrades.reduce((sum, trade) => sum + trade.pnl, 0);
+        const totalLosses = Math.abs(losingTrades.reduce((sum, trade) => sum + trade.pnl, 0));
+        const averageWin = winningTrades.length > 0 ? totalWins / winningTrades.length : 0;
+        const averageLoss = losingTrades.length > 0 ? totalLosses / losingTrades.length : 0;
+
+        // Risk-Reward Ratio
+        const riskRewardRatio = averageLoss > 0 ? averageWin / averageLoss : 0;
+
+        // Profit Factor
+        const profitFactor = totalLosses > 0 ? totalWins / totalLosses : 0;
 
         // Current balance = starting balance + total P&L
         const currentBalance = 10000 + totalPnL;
@@ -26,7 +44,11 @@ function Dashboard({ balance, trades, currentSymbol = 'BTC/USDT' }) {
             totalPnL: totalPnL,
             winRate: winRate,
             totalTrades: executedTrades.length,
-            currentBalance: currentBalance
+            currentBalance: currentBalance,
+            riskRewardRatio: riskRewardRatio,
+            profitFactor: profitFactor,
+            averageWin: averageWin,
+            averageLoss: averageLoss
         };
     };
 
@@ -67,7 +89,41 @@ function Dashboard({ balance, trades, currentSymbol = 'BTC/USDT' }) {
                 </div>
             </div>
 
-            {/* Live Chart - Pass the LATEST trades */}
+            {/* NEW: Enhanced Performance Metrics */}
+            <div className="performance-metrics">
+                <div className="metrics-grid">
+                    <div className="metric-card">
+                        <div className="metric-label">Risk-Reward Ratio</div>
+                        <div className="metric-value risk-reward">
+                            {stats.riskRewardRatio > 0 ? `${stats.riskRewardRatio.toFixed(2)}:1` : 'N/A'}
+                        </div>
+                        <div className="metric-subtitle">Per $1 risked</div>
+                    </div>
+                    <div className="metric-card">
+                        <div className="metric-label">Profit Factor</div>
+                        <div className="metric-value profit-factor">
+                            {stats.profitFactor.toFixed(2)}
+                        </div>
+                        <div className="metric-subtitle">Total gains/losses</div>
+                    </div>
+                    <div className="metric-card">
+                        <div className="metric-label">Average Win</div>
+                        <div className="metric-value avg-win">
+                            ${stats.averageWin.toFixed(2)}
+                        </div>
+                        <div className="metric-subtitle">Per winning trade</div>
+                    </div>
+                    <div className="metric-card">
+                        <div className="metric-label">Average Loss</div>
+                        <div className="metric-value avg-loss">
+                            ${stats.averageLoss.toFixed(2)}
+                        </div>
+                        <div className="metric-subtitle">Per losing trade</div>
+                    </div>
+                </div>
+            </div>
+
+            {/* Live Chart */}
             <LiveChart symbol={currentSymbol} trades={latestTrades} />
 
             <div className="recent-trades">

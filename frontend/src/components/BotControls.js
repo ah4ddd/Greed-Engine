@@ -229,7 +229,7 @@ function BotControls({ settings, botStatus, onRefresh }) {
                         {loading && !botStatus.running ? (
                             <><span className="btn-spinner"></span>STARTING...</>
                         ) : (
-                            <>🚀 START ENGINE</>
+                            <>START ENGINE</>
                         )}
                     </button>
 
@@ -241,7 +241,7 @@ function BotControls({ settings, botStatus, onRefresh }) {
                         {loading && botStatus.running ? (
                             <><span className="btn-spinner"></span>STOPPING...</>
                         ) : (
-                            <>⏹️ STOP ENGINE</>
+                            <>STOP ENGINE</>
                         )}
                     </button>
 
@@ -253,7 +253,7 @@ function BotControls({ settings, botStatus, onRefresh }) {
                         {loading ? (
                             <><span className="btn-spinner"></span>ANALYZING...</>
                         ) : (
-                            <>📊 BACKTEST</>
+                            <>BACKTEST</>
                         )}
                     </button>
                 </div>
