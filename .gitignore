@@ -8,3 +8,15 @@ venv
 venv/
 database
 node_modules/
+database/
+# Ignore all SQLite files
+*.sqlite
+*.sqlite3
+
+# Or ignore entire database folder if exists
+/database/
+
+# Ignore SQLite database files
+*.sqlite
+*.db
+/database/
