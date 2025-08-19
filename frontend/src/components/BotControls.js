@@ -11,6 +11,13 @@ function BotControls({ settings, botStatus, onRefresh }) {
     const [trades, setTrades] = useState([]);
     const [movingAverages, setMovingAverages] = useState({ fast: [], slow: [] });
 
+    // Handle trade amount change - store locally and pass to API
+    const [tradeAmount, setTradeAmount] = useState(settings.trade_amount || 1000);
+
+    const handleTradeAmountChange = (value) => {
+        setTradeAmount(parseFloat(value));
+    };
+
     // Fetch live chart data and calculate moving averages
     const fetchStrategyData = async () => {
         try {
@@ -156,7 +163,12 @@ function BotControls({ settings, botStatus, onRefresh }) {
         setLoading(true);
         setMessage('Initializing trading engine...');
         try {
-            await axios.post('/api/start', settings);
+            // Include trade amount in the settings when starting bot
+            const botSettings = {
+                ...settings,
+                trade_amount: tradeAmount
+            };
+            await axios.post('/api/start', botSettings);
             setMessage('Trading engine activated! 🚀');
             setLastAction('Bot started');
             onRefresh();
@@ -205,6 +217,23 @@ function BotControls({ settings, botStatus, onRefresh }) {
         <div className="bot-controls">
             <div className="control-panel">
                 <h3>Bot Controls</h3>
+
+                {/* NEW: Trade Amount Configuration */}
+                <div className="trade-config-section">
+                    <div className="form-group">
+                        <label>Trade Amount ($)</label>
+                        <input
+                            type="number"
+                            step="100"
+                            min="100"
+                            max="50000"
+                            value={tradeAmount}
+                            onChange={(e) => handleTradeAmountChange(e.target.value)}
+                            placeholder="Enter trade amount in USD"
+                        />
+                        <small className="form-hint">Amount of capital per trade (recommended: $500-$2000)</small>
+                    </div>
+                </div>
 
                 <div className="bot-status-display">
                     <div className={`status-indicator-large ${botStatus.running ? 'active' : 'inactive'}`}>
@@ -265,7 +294,7 @@ function BotControls({ settings, botStatus, onRefresh }) {
                 )}
             </div>
 
-            {/* NEW: Live Strategy Visualization */}
+            {/* Live Strategy Visualization */}
             <div className="strategy-visualization">
                 <h3>Live Strategy Execution</h3>
 
@@ -273,7 +302,9 @@ function BotControls({ settings, botStatus, onRefresh }) {
                     <div className="strategy-details">
                         <div className="strategy-item">
                             <span className="strategy-label">Strategy:</span>
-                            <span className="strategy-value">Moving Average Crossover</span>
+                            <span className="strategy-value">
+                                {settings.strategy_type === 'custom' ? 'Custom Strategy' : 'Moving Average Crossover'}
+                            </span>
                         </div>
                         <div className="strategy-item">
                             <span className="strategy-label">Fast MA:</span>
@@ -390,6 +421,16 @@ function BotControls({ settings, botStatus, onRefresh }) {
                     <div className="config-item">
                         <span className="config-label">Trading Pair</span>
                         <span className="config-value">{settings.symbol}</span>
+                    </div>
+                    <div className="config-item">
+                        <span className="config-label">Trade Amount</span>
+                        <span className="config-value">${tradeAmount}</span>
+                    </div>
+                    <div className="config-item">
+                        <span className="config-label">Strategy Type</span>
+                        <span className="config-value">
+                            {settings.strategy_type === 'custom' ? 'Custom Strategy' : 'Default MA Crossover'}
+                        </span>
                     </div>
                     <div className="config-item">
                         <span className="config-label">Risk per Trade</span>

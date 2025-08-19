@@ -8,6 +8,7 @@ import os
 import threading
 import time
 import pandas as pd
+import json
 
 app = Flask(__name__, static_folder='frontend/build')
 CORS(app)
@@ -19,6 +20,29 @@ bot_running = False
 bot_thread = None
 current_bot = None
 current_interface = None
+
+# NEW: Configuration storage
+CONFIG_FILE = 'bot_config.json'
+
+def load_config():
+    """Load saved configuration"""
+    try:
+        if os.path.exists(CONFIG_FILE):
+            with open(CONFIG_FILE, 'r') as f:
+                return json.load(f)
+    except Exception as e:
+        print(f"Error loading config: {e}")
+    return {}
+
+def save_config(config_data):
+    """Save configuration to file"""
+    try:
+        with open(CONFIG_FILE, 'w') as f:
+            json.dump(config_data, f, indent=2)
+        return True
+    except Exception as e:
+        print(f"Error saving config: {e}")
+        return False
 
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
@@ -37,6 +61,37 @@ def get_balance():
 def get_trades():
     trades = get_trade_history()
     return jsonify(trades)
+
+# NEW: Save configuration endpoint
+@app.route('/api/save-config', methods=['POST'])
+def save_configuration():
+    """Save trading configuration"""
+    try:
+        config_data = request.get_json()
+
+        # Validate required fields
+        required_fields = ['strategy_type', 'risk', 'stop_loss', 'take_profit']
+        for field in required_fields:
+            if field not in config_data:
+                return jsonify({'error': f'Missing required field: {field}'}), 400
+
+        if save_config(config_data):
+            return jsonify({'message': 'Configuration saved successfully'})
+        else:
+            return jsonify({'error': 'Failed to save configuration'}), 500
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# NEW: Load configuration endpoint
+@app.route('/api/load-config', methods=['GET'])
+def load_configuration():
+    """Load saved trading configuration"""
+    try:
+        config = load_config()
+        return jsonify(config)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/ohlcv', methods=['GET'])
 def get_ohlcv():
@@ -102,12 +157,26 @@ def start_bot():
     stop_loss = float(data.get('stop_loss', 1.0))
     take_profit = float(data.get('take_profit', 2.0))
 
+    # NEW: Handle strategy type and trade amount
+    strategy_type = data.get('strategy_type', 'default_ma')
+    trade_amount = data.get('trade_amount')  # Can be None for balance-based sizing
+
     if bot_running:
         return jsonify({"error": "Bot is already running"}), 400
 
     try:
         current_interface = TradingInterface(api_key, api_secret, exchange, real_mode)
-        current_bot = TradingBot(current_interface, symbol, risk, stop_loss, take_profit)
+
+        # NEW: Pass strategy type and trade amount to bot
+        current_bot = TradingBot(
+            current_interface,
+            symbol,
+            risk,
+            stop_loss,
+            take_profit,
+            strategy_type=strategy_type,
+            trade_amount=trade_amount
+        )
 
         def run_bot():
             global bot_running
@@ -124,7 +193,12 @@ def start_bot():
         bot_thread.daemon = True
         bot_thread.start()
 
-        return jsonify({"message": "Bot started successfully"})
+        strategy_name = "Custom Strategy" if strategy_type == "custom" else "Default MA Crossover"
+        trade_info = f" with ${trade_amount} per trade" if trade_amount else " with balance-based sizing"
+
+        return jsonify({
+            "message": f"Bot started successfully using {strategy_name}{trade_info}"
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
