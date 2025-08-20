@@ -13,8 +13,10 @@ def check_volatility_filter(df, max_volatility_percent=5.0):
 
 def moving_average_crossover(df, short=9, long=21):
     """Original moving average crossover strategy"""
-    df["ma_short"] = df["close"].rolling(short).mean()
-    df["ma_long"] = df["close"].rolling(long).mean()
+    # Make explicit copy to avoid SettingWithCopyWarning
+    df = df.copy()
+    df.loc[:, "ma_short"] = df["close"].rolling(short).mean()
+    df.loc[:, "ma_long"] = df["close"].rolling(long).mean()
     if df["ma_short"].iloc[-2] < df["ma_long"].iloc[-2] and df["ma_short"].iloc[-1] > df["ma_long"].iloc[-1]:
         return "buy"
     elif df["ma_short"].iloc[-2] > df["ma_long"].iloc[-2] and df["ma_short"].iloc[-1] < df["ma_long"].iloc[-1]:
@@ -23,8 +25,10 @@ def moving_average_crossover(df, short=9, long=21):
 
 def custom_strategy(df, short=9, long=21):
     """Custom strategy - same MA logic but uses user-defined risk management"""
-    df["ma_short"] = df["close"].rolling(short).mean()
-    df["ma_long"] = df["close"].rolling(long).mean()
+    # Make explicit copy to avoid SettingWithCopyWarning
+    df = df.copy()
+    df.loc[:, "ma_short"] = df["close"].rolling(short).mean()
+    df.loc[:, "ma_long"] = df["close"].rolling(long).mean()
     if df["ma_short"].iloc[-2] < df["ma_long"].iloc[-2] and df["ma_short"].iloc[-1] > df["ma_long"].iloc[-1]:
         return "buy"
     elif df["ma_short"].iloc[-2] > df["ma_long"].iloc[-2] and df["ma_short"].iloc[-1] < df["ma_long"].iloc[-1]:
