@@ -21,7 +21,7 @@ bot_thread = None
 current_bot = None
 current_interface = None
 
-# NEW: Configuration storage
+# Config file
 CONFIG_FILE = 'bot_config.json'
 
 def load_config():
@@ -62,7 +62,7 @@ def get_trades():
     trades = get_trade_history()
     return jsonify(trades)
 
-# NEW: Save configuration endpoint
+# Save configuration endpoint
 @app.route('/api/save-config', methods=['POST'])
 def save_configuration():
     """Save trading configuration"""
@@ -83,7 +83,7 @@ def save_configuration():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-# NEW: Load configuration endpoint
+# Load configuration endpoint
 @app.route('/api/load-config', methods=['GET'])
 def load_configuration():
     """Load saved trading configuration"""
@@ -157,9 +157,8 @@ def start_bot():
     stop_loss = float(data.get('stop_loss', 1.0))
     take_profit = float(data.get('take_profit', 2.0))
 
-    # NEW: Handle strategy type and trade amount
     strategy_type = data.get('strategy_type', 'default_ma')
-    trade_amount = data.get('trade_amount')  # Can be None for balance-based sizing
+    trade_amount = data.get('trade_amount')  # Can be None
 
     if bot_running:
         return jsonify({"error": "Bot is already running"}), 400
@@ -167,7 +166,6 @@ def start_bot():
     try:
         current_interface = TradingInterface(api_key, api_secret, exchange, real_mode)
 
-        # NEW: Pass strategy type and trade amount to bot
         current_bot = TradingBot(
             current_interface,
             symbol,
@@ -183,7 +181,7 @@ def start_bot():
             while bot_running:
                 try:
                     current_bot.run_once()
-                    time.sleep(10)  # Check every 10 seconds for more activity
+                    time.sleep(10)
                 except Exception as e:
                     print(f"Bot error: {e}")
                     time.sleep(10)
@@ -211,6 +209,36 @@ def stop_bot():
 @app.route('/api/status', methods=['GET'])
 def bot_status():
     return jsonify({"running": bot_running})
+
+# Fixed current-position endpoint
+@app.route('/api/current-position', methods=['GET'])
+def get_current_position():
+    """Return the bot's current trading position"""
+    global current_bot
+    try:
+        if not current_bot:
+            return jsonify({'error': 'Bot not running'}), 400
+
+        # Safely get position attributes with default values
+        position = {
+            'symbol': getattr(current_bot, 'symbol', 'Unknown'),
+            'side': getattr(current_bot, 'current_side', None) or getattr(current_bot, 'position_side', None),
+            'entry_price': getattr(current_bot, 'entry_price', None) or getattr(current_bot, 'current_price', None),
+            'amount': getattr(current_bot, 'trade_amount', None) or getattr(current_bot, 'position_size', None),
+            'status': 'active' if hasattr(current_bot, 'in_position') and current_bot.in_position else 'no_position'
+        }
+
+        # Additional safety checks
+        if position['side'] is None:
+            position['side'] = 'none'
+
+        if position['amount'] is None:
+            position['amount'] = 0
+
+        return jsonify(position)
+    except Exception as e:
+        print(f"Error getting current position: {e}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/backtest', methods=['POST'])
 def backtest():

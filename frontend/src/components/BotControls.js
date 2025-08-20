@@ -10,13 +10,37 @@ function BotControls({ settings, botStatus, onRefresh }) {
     const [chartData, setChartData] = useState([]);
     const [trades, setTrades] = useState([]);
     const [movingAverages, setMovingAverages] = useState({ fast: [], slow: [] });
+    const [currentPosition, setCurrentPosition] = useState(null);
+    const [liveStats, setLiveStats] = useState({
+        todayPnl: 0,
+        totalTrades: 0,
+        winRate: 0,
+        avgProfit: 0,
+        avgLoss: 0
+    });
 
     // Handle trade amount change - store locally and pass to API
-    const [tradeAmount, setTradeAmount] = useState(settings.trade_amount || 1000);
+    const [tradeAmount, setTradeAmount] = useState(() => {
+        // Get from localStorage first, then settings, then default
+        const saved = localStorage.getItem('bot_trade_amount');
+        if (saved) return parseFloat(saved);
+        return settings.trade_amount || 1000;
+    });
 
     const handleTradeAmountChange = (value) => {
-        setTradeAmount(parseFloat(value));
+        const amount = parseFloat(value);
+        setTradeAmount(amount);
+        // Save to localStorage so it persists
+        localStorage.setItem('bot_trade_amount', amount.toString());
     };
+
+    // Only update from settings if we don't have a saved value
+    useEffect(() => {
+        const saved = localStorage.getItem('bot_trade_amount');
+        if (!saved && settings.trade_amount) {
+            setTradeAmount(settings.trade_amount);
+        }
+    }, [settings.trade_amount]);
 
     // Fetch live chart data and calculate moving averages
     const fetchStrategyData = async () => {
@@ -26,8 +50,32 @@ function BotControls({ settings, botStatus, onRefresh }) {
                 axios.get('/api/trades')
             ]);
 
+            // Only fetch position if bot is running
+            let position = null;
+            // Removed position fetching since we're not using it anymore
+
             const ohlcvData = ohlcvRes.data.data;
             const recentTrades = tradesRes.data.slice(-10); // Last 10 trades for markers
+
+            // Calculate live statistics
+            const todayTrades = tradesRes.data.filter(trade => {
+                const tradeDate = new Date(trade.timestamp).toDateString();
+                const today = new Date().toDateString();
+                return tradeDate === today;
+            });
+
+            const wins = todayTrades.filter(t => t.pnl > 0);
+            const losses = todayTrades.filter(t => t.pnl < 0);
+
+            setLiveStats({
+                todayPnl: todayTrades.reduce((sum, t) => sum + t.pnl, 0),
+                totalTrades: todayTrades.length,
+                winRate: todayTrades.length > 0 ? (wins.length / todayTrades.length * 100) : 0,
+                avgProfit: wins.length > 0 ? wins.reduce((sum, t) => sum + t.pnl, 0) / wins.length : 0,
+                avgLoss: losses.length > 0 ? Math.abs(losses.reduce((sum, t) => sum + t.pnl, 0) / losses.length) : 0
+            });
+
+            setCurrentPosition(position);
 
             // Calculate moving averages
             const prices = ohlcvData.map(candle => candle.close);
@@ -211,6 +259,8 @@ function BotControls({ settings, botStatus, onRefresh }) {
         setLoading(false);
     };
 
+    // Helper function removed since we're not using position display anymore
+
     const tradeMarkers = getTradeMarkers();
 
     return (
@@ -297,6 +347,35 @@ function BotControls({ settings, botStatus, onRefresh }) {
             {/* Live Strategy Visualization */}
             <div className="strategy-visualization">
                 <h3>Live Strategy Execution</h3>
+
+                {/* NEW: Live Statistics Panel */}
+                <div className="live-stats-panel">
+                    <div className="stats-grid">
+                        <div className="stat-item">
+                            <span className="stat-label">Today's P&L</span>
+                            <span className={`stat-value ${liveStats.todayPnl >= 0 ? 'profit' : 'loss'}`}>
+                                ${liveStats.todayPnl.toFixed(2)}
+                            </span>
+                        </div>
+                        <div className="stat-item">
+                            <span className="stat-label">Trades Today</span>
+                            <span className="stat-value">{liveStats.totalTrades}</span>
+                        </div>
+                        <div className="stat-item">
+                            <span className="stat-label">Win Rate</span>
+                            <span className="stat-value">{liveStats.winRate.toFixed(1)}%</span>
+                        </div>
+                        <div className="stat-item">
+                            <span className="stat-label">Avg Profit</span>
+                            <span className="stat-value profit">${liveStats.avgProfit.toFixed(2)}</span>
+                        </div>
+                        <div className="stat-item">
+                            <span className="stat-label">Avg Loss</span>
+                            <span className="stat-value loss">${liveStats.avgLoss.toFixed(2)}</span>
+                        </div>
+
+                    </div>
+                </div>
 
                 <div className="strategy-info">
                     <div className="strategy-details">

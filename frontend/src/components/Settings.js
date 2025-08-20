@@ -1,9 +1,24 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 
 function Settings({ settings, setSettings }) {
     const [saveMessage, setSaveMessage] = useState('');
     const [loading, setLoading] = useState(false);
+
+    // Load saved configuration on component mount
+    useEffect(() => {
+        const loadConfig = async () => {
+            try {
+                const response = await axios.get('/api/load-config');
+                if (response.data) {
+                    setSettings(prev => ({ ...prev, ...response.data }));
+                }
+            } catch (error) {
+                console.warn('Could not load saved configuration', error.message);
+            }
+        };
+        loadConfig();
+    }, [setSettings]);
 
     const handleChange = (field, value) => {
         setSettings(prev => ({
@@ -18,10 +33,10 @@ function Settings({ settings, setSettings }) {
 
         try {
             const configData = {
-                strategy_type: settings.strategy_type,
-                risk: settings.risk,
-                stop_loss: settings.stop_loss,
-                take_profit: settings.take_profit
+                strategy_type: settings.strategy_type || 'default_ma',
+                risk: settings.risk !== undefined ? settings.risk : 1.0,
+                stop_loss: settings.stop_loss !== undefined ? settings.stop_loss : 1.0,
+                take_profit: settings.take_profit !== undefined ? settings.take_profit : 2.0
             };
 
             await axios.post('/api/save-config', configData);
@@ -32,6 +47,7 @@ function Settings({ settings, setSettings }) {
             setSaveMessage('Error saving configuration: ' + error.message);
             setTimeout(() => setSaveMessage(''), 5000);
         }
+
         setLoading(false);
     };
 
@@ -44,7 +60,7 @@ function Settings({ settings, setSettings }) {
                     <label>API Key</label>
                     <input
                         type="password"
-                        value={settings.api_key}
+                        value={settings.api_key || ''}
                         onChange={(e) => handleChange('api_key', e.target.value)}
                         placeholder="Enter your exchange API key"
                     />
@@ -54,7 +70,7 @@ function Settings({ settings, setSettings }) {
                     <label>API Secret</label>
                     <input
                         type="password"
-                        value={settings.api_secret}
+                        value={settings.api_secret || ''}
                         onChange={(e) => handleChange('api_secret', e.target.value)}
                         placeholder="Enter your exchange API secret"
                     />
@@ -63,7 +79,7 @@ function Settings({ settings, setSettings }) {
                 <div className="form-group">
                     <label>Exchange</label>
                     <select
-                        value={settings.exchange}
+                        value={settings.exchange || 'binance'}
                         onChange={(e) => handleChange('exchange', e.target.value)}
                     >
                         <option value="binance">Binance</option>
@@ -76,7 +92,7 @@ function Settings({ settings, setSettings }) {
                     <label>Trading Pair</label>
                     <input
                         type="text"
-                        value={settings.symbol}
+                        value={settings.symbol || ''}
                         onChange={(e) => handleChange('symbol', e.target.value)}
                         placeholder="e.g., BTC/USDT, EUR/USD"
                     />
@@ -86,14 +102,13 @@ function Settings({ settings, setSettings }) {
                     <label>
                         <input
                             type="checkbox"
-                            checked={settings.real_mode}
+                            checked={settings.real_mode || false}
                             onChange={(e) => handleChange('real_mode', e.target.checked)}
                         />
                         Real Trading Mode (⚠️ Use real money)
                     </label>
                 </div>
 
-                {/* NEW: Strategy Selection */}
                 <div className="form-group">
                     <label>Trading Strategy</label>
                     <select
@@ -105,7 +120,6 @@ function Settings({ settings, setSettings }) {
                     </select>
                 </div>
 
-                {/* Risk Management Section */}
                 <div className="form-group">
                     <label>Risk per Trade (%)</label>
                     <input
@@ -113,7 +127,7 @@ function Settings({ settings, setSettings }) {
                         step="0.1"
                         min="0.1"
                         max="5"
-                        value={settings.risk}
+                        value={settings.risk !== undefined ? settings.risk : 1.0}
                         onChange={(e) => handleChange('risk', parseFloat(e.target.value))}
                         disabled={settings.strategy_type === 'default_ma'}
                     />
@@ -129,7 +143,7 @@ function Settings({ settings, setSettings }) {
                         step="0.1"
                         min="0.1"
                         max="10"
-                        value={settings.stop_loss}
+                        value={settings.stop_loss !== undefined ? settings.stop_loss : 1.0}
                         onChange={(e) => handleChange('stop_loss', parseFloat(e.target.value))}
                         disabled={settings.strategy_type === 'default_ma'}
                     />
@@ -145,7 +159,7 @@ function Settings({ settings, setSettings }) {
                         step="0.1"
                         min="0.1"
                         max="20"
-                        value={settings.take_profit}
+                        value={settings.take_profit !== undefined ? settings.take_profit : 2.0}
                         onChange={(e) => handleChange('take_profit', parseFloat(e.target.value))}
                         disabled={settings.strategy_type === 'default_ma'}
                     />
@@ -154,7 +168,6 @@ function Settings({ settings, setSettings }) {
                     )}
                 </div>
 
-                {/* NEW: Save Configuration Button */}
                 <div className="form-group">
                     <button
                         className="btn btn-primary save-config-btn"
