@@ -2,5 +2,5 @@
   "strategy_type": "custom",
   "risk": 0.3,
   "stop_loss": 0.3,
-  "take_profit": 1
+  "take_profit": 1.1
 }
