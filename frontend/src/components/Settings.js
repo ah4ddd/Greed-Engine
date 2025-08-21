@@ -11,7 +11,10 @@ function Settings({ settings, setSettings }) {
             try {
                 const response = await axios.get('/api/load-config');
                 if (response.data) {
-                    setSettings(prev => ({ ...prev, ...response.data }));
+                    setSettings(prev => ({
+                        ...prev,
+                        ...response.data
+                    }));
                 }
             } catch (error) {
                 console.warn('Could not load saved configuration', error.message);
@@ -27,6 +30,27 @@ function Settings({ settings, setSettings }) {
         }));
     };
 
+    const testConnection = async () => {
+        if (!settings.api_key || !settings.api_secret) {
+            alert('Please enter API key and secret first');
+            return;
+        }
+
+        try {
+            const response = await axios.post('/api/test-connection', {
+                api_key: settings.api_key,
+                api_secret: settings.api_secret,
+                exchange: settings.exchange || 'binance'
+            });
+
+            if (response.data.success) {
+                alert(`✅ Connection Success!\nYour USDT Balance: ${response.data.your_usdt_balance}\nBTC Price: ${response.data.current_btc_price}`);
+            }
+        } catch (error) {
+            alert(`❌ Connection Failed: ${error.response?.data?.error || error.message}`);
+        }
+    };
+
     const saveConfiguration = async () => {
         setLoading(true);
         setSaveMessage('Saving configuration...');
@@ -36,26 +60,29 @@ function Settings({ settings, setSettings }) {
                 strategy_type: settings.strategy_type || 'default_ma',
                 risk: settings.risk !== undefined ? settings.risk : 1.0,
                 stop_loss: settings.stop_loss !== undefined ? settings.stop_loss : 1.0,
-                take_profit: settings.take_profit !== undefined ? settings.take_profit : 2.0
+                take_profit: settings.take_profit !== undefined ? settings.take_profit : 2.0,
+                // NEW: Include trading mode and leverage
+                trading_mode: settings.trading_mode || 'spot',
+                leverage: settings.leverage !== undefined ? settings.leverage : 1
             };
 
             await axios.post('/api/save-config', configData);
-            setSaveMessage('Configuration saved successfully! ✅');
-
+            setSaveMessage('Configuration saved successfully!');
             setTimeout(() => setSaveMessage(''), 3000);
+
         } catch (error) {
             setSaveMessage('Error saving configuration: ' + error.message);
             setTimeout(() => setSaveMessage(''), 5000);
         }
-
         setLoading(false);
     };
 
     return (
         <div className="settings">
             <h3>Bot Configuration</h3>
-
             <div className="settings-form">
+
+                {/* Existing API Configuration */}
                 <div className="form-group">
                     <label>API Key</label>
                     <input
@@ -74,6 +101,21 @@ function Settings({ settings, setSettings }) {
                         onChange={(e) => handleChange('api_secret', e.target.value)}
                         placeholder="Enter your exchange API secret"
                     />
+                    <button
+                        onClick={testConnection}
+                        style={{
+                            marginTop: '10px',
+                            padding: '8px 16px',
+                            backgroundColor: '#007bff',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '4px',
+                            cursor: 'pointer',
+                            fontSize: '14px'
+                        }}
+                    >
+                        Test API Connection
+                    </button>
                 </div>
 
                 <div className="form-group">
@@ -92,11 +134,59 @@ function Settings({ settings, setSettings }) {
                     <label>Trading Pair</label>
                     <input
                         type="text"
-                        value={settings.symbol || ''}
+                        value={settings.symbol || 'BTC/USDT'}
                         onChange={(e) => handleChange('symbol', e.target.value)}
-                        placeholder="e.g., BTC/USDT, EUR/USD"
+                        placeholder="e.g., BTC/USDT, ETH/USDT"
                     />
                 </div>
+
+                {/* NEW: Trading Mode Selection */}
+                <div className="form-group">
+                    <label>Trading Mode</label>
+                    <select
+                        value={settings.trading_mode || 'spot'}
+                        onChange={(e) => handleChange('trading_mode', e.target.value)}
+                    >
+                        <option value="spot">Spot Trading</option>
+                        <option value="futures">Futures Trading</option>
+                    </select>
+                </div>
+
+                {/* NEW: Leverage setting (only show for futures) */}
+                {settings.trading_mode === 'futures' && (
+                    <div className="form-group">
+                        <label>Leverage (1x - 10x)</label>
+                        <input
+                            type="number"
+                            min="1"
+                            max="10"
+                            value={settings.leverage || 3}
+                            onChange={(e) => handleChange('leverage', parseInt(e.target.value))}
+                        />
+                        <small style={{ color: '#888', fontSize: '12px' }}>
+                            ⚠️ Higher leverage = Higher risk of liquidation
+                        </small>
+                    </div>
+                )}
+
+                {/* NEW: Futures trading warning */}
+                {settings.trading_mode === 'futures' && (
+                    <div style={{
+                        background: '#130f02ff',
+                        padding: '12px',
+                        borderRadius: '6px',
+                        margin: '10px 0',
+                        border: '1px solid #a70000ff'
+                    }}>
+                        <strong>⚠️ Futures Trading Warning:</strong>
+                        <ul style={{ margin: '8px 0', paddingLeft: '20px', fontSize: '13px' }}>
+                            <li>Leverage amplifies both profits AND losses</li>
+                            <li>Funding fees are charged every 8 hours</li>
+                            <li>Risk of liquidation if trades go against you</li>
+                            <li>Start with low leverage (2-3x) and small amounts</li>
+                        </ul>
+                    </div>
+                )}
 
                 <div className="form-group checkbox-group">
                     <label>
@@ -109,13 +199,14 @@ function Settings({ settings, setSettings }) {
                     </label>
                 </div>
 
+                {/* Existing Strategy Configuration */}
                 <div className="form-group">
-                    <label>Trading Strategy</label>
+                    <label>Strategy Type</label>
                     <select
                         value={settings.strategy_type || 'default_ma'}
                         onChange={(e) => handleChange('strategy_type', e.target.value)}
                     >
-                        <option value="default_ma">Default MA Crossover (9/21)</option>
+                        <option value="default_ma">Default MA Crossover</option>
                         <option value="custom">Custom Strategy</option>
                     </select>
                 </div>
@@ -129,11 +220,7 @@ function Settings({ settings, setSettings }) {
                         max="5"
                         value={settings.risk !== undefined ? settings.risk : 1.0}
                         onChange={(e) => handleChange('risk', parseFloat(e.target.value))}
-                        disabled={settings.strategy_type === 'default_ma'}
                     />
-                    {settings.strategy_type === 'default_ma' && (
-                        <small className="form-hint">Default: 1.0% (change to Custom Strategy to modify)</small>
-                    )}
                 </div>
 
                 <div className="form-group">
@@ -145,11 +232,7 @@ function Settings({ settings, setSettings }) {
                         max="10"
                         value={settings.stop_loss !== undefined ? settings.stop_loss : 1.0}
                         onChange={(e) => handleChange('stop_loss', parseFloat(e.target.value))}
-                        disabled={settings.strategy_type === 'default_ma'}
                     />
-                    {settings.strategy_type === 'default_ma' && (
-                        <small className="form-hint">Default: 1.0% (change to Custom Strategy to modify)</small>
-                    )}
                 </div>
 
                 <div className="form-group">
@@ -161,28 +244,53 @@ function Settings({ settings, setSettings }) {
                         max="20"
                         value={settings.take_profit !== undefined ? settings.take_profit : 2.0}
                         onChange={(e) => handleChange('take_profit', parseFloat(e.target.value))}
-                        disabled={settings.strategy_type === 'default_ma'}
                     />
-                    {settings.strategy_type === 'default_ma' && (
-                        <small className="form-hint">Default: 2.0% (change to Custom Strategy to modify)</small>
-                    )}
                 </div>
 
+                {settings.strategy_type === 'custom' && (
+                    <div className="form-group">
+                        <label>Trade Amount (USD) - Optional</label>
+                        <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={settings.trade_amount || ''}
+                            onChange={(e) => handleChange('trade_amount', parseFloat(e.target.value) || null)}
+                            placeholder="Leave blank for balance-based sizing"
+                        />
+                    </div>
+                )}
+
+                {/* Save Configuration Button */}
                 <div className="form-group">
                     <button
-                        className="btn btn-primary save-config-btn"
                         onClick={saveConfiguration}
                         disabled={loading}
+                        className={saveMessage.includes('successfully') ? 'btn-success' : 'btn-primary'}
+                        style={{
+                            padding: '12px 24px',
+                            borderRadius: '6px',
+                            border: 'none',
+                            cursor: loading ? 'not-allowed' : 'pointer',
+                            backgroundColor: saveMessage.includes('successfully') ? '#28a745' : '#000000ff',
+                            color: 'white',
+                            fontSize: '14px',
+                            fontWeight: 'bold'
+                        }}
                     >
-                        {loading ? (
-                            <><span className="btn-spinner"></span>Saving...</>
-                        ) : (
-                            <>Save Configuration</>
-                        )}
+                        {loading ? 'Saving...' : 'Save Configuration'}
                     </button>
 
                     {saveMessage && (
-                        <div className={`config-message ${saveMessage.includes('Error') ? 'error' : 'success'}`}>
+                        <div style={{
+                            marginTop: '10px',
+                            padding: '8px',
+                            borderRadius: '4px',
+                            fontSize: '13px',
+                            backgroundColor: saveMessage.includes('successfully') ? '#d4edda' : '#f8d7da',
+                            color: saveMessage.includes('successfully') ? '#155724' : '#721c24',
+                            border: `1px solid ${saveMessage.includes('successfully') ? '#c3e6cb' : '#f5c6cb'}`
+                        }}>
                             {saveMessage}
                         </div>
                     )}

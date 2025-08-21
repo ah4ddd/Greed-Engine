@@ -12,7 +12,6 @@ import json
 
 app = Flask(__name__, static_folder='frontend/build')
 CORS(app)
-
 init_db()
 
 # Bot state
@@ -68,7 +67,6 @@ def save_configuration():
     """Save trading configuration"""
     try:
         config_data = request.get_json()
-
         # Validate required fields
         required_fields = ['strategy_type', 'risk', 'stop_loss', 'take_profit']
         for field in required_fields:
@@ -99,10 +97,11 @@ def get_ohlcv():
     symbol = request.args.get('symbol', 'BTC/USDT')
     timeframe = request.args.get('timeframe', '1m')
     limit = int(request.args.get('limit', 100))
+    trading_mode = request.args.get('trading_mode', 'spot')
 
     try:
         # Create a temporary interface to get price data
-        temp_interface = TradingInterface('', '', 'binance', False)
+        temp_interface = TradingInterface('', '', 'binance', False, trading_mode)
         df = temp_interface.fetch_ohlcv(symbol, timeframe, limit)
 
         # Convert to format needed for charts
@@ -129,16 +128,18 @@ def get_ohlcv():
 def get_current_price():
     """Get current price for a symbol"""
     symbol = request.args.get('symbol', 'BTC/USDT')
+    trading_mode = request.args.get('trading_mode', 'spot')
 
     try:
-        temp_interface = TradingInterface('', '', 'binance', False)
+        temp_interface = TradingInterface('', '', 'binance', False, trading_mode)
         df = temp_interface.fetch_ohlcv(symbol, '1m', 1)
         current_price = float(df['close'].iloc[-1])
 
         return jsonify({
             'symbol': symbol,
             'price': current_price,
-            'timestamp': int(time.time() * 1000)
+            'timestamp': int(time.time() * 1000),
+            'trading_mode': trading_mode
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -156,15 +157,21 @@ def start_bot():
     risk = float(data.get('risk', 1.0))
     stop_loss = float(data.get('stop_loss', 1.0))
     take_profit = float(data.get('take_profit', 2.0))
-
     strategy_type = data.get('strategy_type', 'default_ma')
     trade_amount = data.get('trade_amount')  # Can be None
+
+    # NEW: Get trading mode and leverage
+    trading_mode = data.get('trading_mode', 'spot')
+    leverage = int(data.get('leverage', 1))
 
     if bot_running:
         return jsonify({"error": "Bot is already running"}), 400
 
     try:
-        current_interface = TradingInterface(api_key, api_secret, exchange, real_mode)
+        # Updated to include trading_mode and leverage
+        current_interface = TradingInterface(
+            api_key, api_secret, exchange, real_mode, trading_mode, leverage
+        )
 
         current_bot = TradingBot(
             current_interface,
@@ -194,9 +201,15 @@ def start_bot():
         strategy_name = "Custom Strategy" if strategy_type == "custom" else "Default MA Crossover"
         trade_info = f" with ${trade_amount} per trade" if trade_amount else " with balance-based sizing"
 
+        # NEW: Include trading mode and leverage in response
+        mode_info = f" in {trading_mode.upper()} mode"
+        if trading_mode == "futures" and leverage > 1:
+            mode_info += f" (Leverage: {leverage}x)"
+
         return jsonify({
-            "message": f"Bot started successfully using {strategy_name}{trade_info}"
+            "message": f"Bot started successfully using {strategy_name}{trade_info}{mode_info}"
         })
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -215,6 +228,7 @@ def bot_status():
 def get_current_position():
     """Return the bot's current trading position"""
     global current_bot
+
     try:
         if not current_bot:
             return jsonify({'error': 'Bot not running'}), 400
@@ -231,14 +245,47 @@ def get_current_position():
         # Additional safety checks
         if position['side'] is None:
             position['side'] = 'none'
-
         if position['amount'] is None:
             position['amount'] = 0
 
         return jsonify(position)
+
     except Exception as e:
         print(f"Error getting current position: {e}")
         return jsonify({'error': str(e)}), 500
+
+@app.route('/api/test-connection', methods=['POST'])
+def test_binance_connection():
+    """Test if API keys can connect to the selected exchange"""
+    data = request.get_json()
+    api_key = data.get('api_key', '')
+    api_secret = data.get('api_secret', '')
+    exchange = data.get('exchange', 'binance')
+
+    if not api_key or not api_secret:
+        return jsonify({"error": "API key and secret required"}), 400
+
+    try:
+        # Test connection without trading, using the selected exchange
+        test_interface = TradingInterface(api_key, api_secret, exchange, True)
+
+        # Try to fetch account balance (doesn't cost money)
+        balance = test_interface.get_balance('USDT')
+
+        # Try to fetch current price (doesn't cost money)
+        df = test_interface.fetch_ohlcv('BTC/USDT', '1m', 1)
+        current_price = float(df['close'].iloc[-1])
+
+        return jsonify({
+            "success": True,
+            "message": f"✅ API keys work! Connected to {exchange.capitalize()} successfully",
+            "your_usdt_balance": balance['free'],
+            "current_btc_price": current_price
+        })
+    except Exception as e:
+        return jsonify({
+            "error": f"❌ API connection failed: {str(e)}"
+        }), 500
 
 @app.route('/api/backtest', methods=['POST'])
 def backtest():
