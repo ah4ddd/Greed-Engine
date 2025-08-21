@@ -164,6 +164,9 @@ def start_bot():
     trading_mode = data.get('trading_mode', 'spot')
     leverage = int(data.get('leverage', 1))
 
+    # NEW: Get kill switch threshold
+    kill_switch_threshold = int(data.get('kill_switch_threshold', 10))
+
     if bot_running:
         return jsonify({"error": "Bot is already running"}), 400
 
@@ -180,7 +183,8 @@ def start_bot():
             stop_loss,
             take_profit,
             strategy_type=strategy_type,
-            trade_amount=trade_amount
+            trade_amount=trade_amount,
+            kill_switch_threshold=kill_switch_threshold
         )
 
         def run_bot():
@@ -188,6 +192,13 @@ def start_bot():
             while bot_running:
                 try:
                     current_bot.run_once()
+
+                    # NEW: Check if kill switch was triggered
+                    if current_bot.is_kill_switch_active():
+                        print("🛑 Kill switch triggered - stopping bot automatically")
+                        bot_running = False
+                        break
+
                     time.sleep(10)
                 except Exception as e:
                     print(f"Bot error: {e}")
@@ -206,8 +217,11 @@ def start_bot():
         if trading_mode == "futures" and leverage > 1:
             mode_info += f" (Leverage: {leverage}x)"
 
+        # NEW: Include kill switch info
+        kill_switch_info = f" | Kill Switch: {kill_switch_threshold} losses"
+
         return jsonify({
-            "message": f"Bot started successfully using {strategy_name}{trade_info}{mode_info}"
+            "message": f"Bot started successfully using {strategy_name}{trade_info}{mode_info}{kill_switch_info}"
         })
 
     except Exception as e:
@@ -221,7 +235,46 @@ def stop_bot():
 
 @app.route('/api/status', methods=['GET'])
 def bot_status():
-    return jsonify({"running": bot_running})
+    global current_bot
+    status = {"running": bot_running}
+
+    # NEW: Add kill switch status info
+    if current_bot:
+        status.update({
+            "kill_switch_active": current_bot.is_kill_switch_active(),
+            "consecutive_losses": current_bot.consecutive_losses,
+            "kill_switch_threshold": current_bot.kill_switch_threshold,
+            "kill_switch_reason": getattr(current_bot, 'kill_switch_reason', '')
+        })
+
+    return jsonify(status)
+
+# NEW: Kill switch control endpoints
+@app.route('/api/kill-switch-status', methods=['GET'])
+def get_kill_switch_status():
+    """Get current kill switch status"""
+    global current_bot
+
+    if not current_bot:
+        return jsonify({'error': 'Bot not running'}), 400
+
+    return jsonify({
+        'active': current_bot.is_kill_switch_active(),
+        'consecutive_losses': current_bot.consecutive_losses,
+        'threshold': current_bot.kill_switch_threshold,
+        'reason': getattr(current_bot, 'kill_switch_reason', '')
+    })
+
+@app.route('/api/reset-kill-switch', methods=['POST'])
+def reset_kill_switch():
+    """Manually reset the kill switch to resume trading"""
+    global current_bot
+
+    if not current_bot:
+        return jsonify({'error': 'Bot not running'}), 400
+
+    current_bot.reset_kill_switch()
+    return jsonify({'message': 'Kill switch reset - trading can resume'})
 
 # Fixed current-position endpoint
 @app.route('/api/current-position', methods=['GET'])

@@ -63,7 +63,9 @@ function Settings({ settings, setSettings }) {
                 take_profit: settings.take_profit !== undefined ? settings.take_profit : 2.0,
                 // NEW: Include trading mode and leverage
                 trading_mode: settings.trading_mode || 'spot',
-                leverage: settings.leverage !== undefined ? settings.leverage : 1
+                leverage: settings.leverage !== undefined ? settings.leverage : 1,
+                // NEW: Include kill switch threshold
+                kill_switch_threshold: settings.kill_switch_threshold !== undefined ? settings.kill_switch_threshold : 10
             };
 
             await axios.post('/api/save-config', configData);
@@ -114,7 +116,7 @@ function Settings({ settings, setSettings }) {
                             fontSize: '14px'
                         }}
                     >
-                        Test API Connection
+                        🧪 Test API Connection
                     </button>
                 </div>
 
@@ -245,6 +247,38 @@ function Settings({ settings, setSettings }) {
                         value={settings.take_profit !== undefined ? settings.take_profit : 2.0}
                         onChange={(e) => handleChange('take_profit', parseFloat(e.target.value))}
                     />
+                </div>
+
+                {/* NEW: Kill Switch Configuration */}
+                <div className="form-group">
+                    <label>Kill Switch (Consecutive Losses)</label>
+                    <input
+                        type="number"
+                        min="5"
+                        max="20"
+                        value={settings.kill_switch_threshold !== undefined ? settings.kill_switch_threshold : 10}
+                        onChange={(e) => handleChange('kill_switch_threshold', parseInt(e.target.value))}
+                    />
+                    <small style={{ color: '#888', fontSize: '12px', display: 'block', marginTop: '4px' }}>
+                        Bot will auto-stop after this many consecutive losses (5-20)
+                    </small>
+                </div>
+
+                {/* NEW: Kill Switch Info Box */}
+                <div style={{
+                    background: '#000000ff',
+                    padding: '12px',
+                    borderRadius: '6px',
+                    margin: '10px 0',
+                    border: '1px solid #16213e'
+                }}>
+                    <strong>🛡️ Kill Switch Protection:</strong>
+                    <ul style={{ margin: '8px 0', paddingLeft: '20px', fontSize: '13px' }}>
+                        <li>Automatically stops bot after consecutive losses</li>
+                        <li>Protects against black swan events</li>
+                        <li>Based on data : longest streak was 6 losses</li>
+                        <li>Manual reset required to resume trading</li>
+                    </ul>
                 </div>
 
                 {settings.strategy_type === 'custom' && (

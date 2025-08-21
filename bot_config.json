@@ -4,5 +4,6 @@
   "stop_loss": 0.3,
   "take_profit": 1.1,
   "trading_mode": "spot",
-  "leverage": 1
+  "leverage": 1,
+  "kill_switch_threshold": 5
 }

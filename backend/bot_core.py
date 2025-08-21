@@ -5,7 +5,7 @@ import random
 import time
 
 class TradingBot:
-    def __init__(self, interface, symbol, risk, stop_loss, take_profit, strategy_type="default_ma", trade_amount=None):
+    def __init__(self, interface, symbol, risk, stop_loss, take_profit, strategy_type="default_ma", trade_amount=None, kill_switch_threshold=10):
         self.iface = interface
         self.symbol = symbol
         self.risk = risk
@@ -16,8 +16,48 @@ class TradingBot:
         self.last_trade_time = 0
         self.trade_count = 0
 
+        # NEW: Kill Switch Protection Variables
+        self.consecutive_losses = 0
+        self.kill_switch_threshold = kill_switch_threshold
+        self.kill_switch_triggered = False
+        self.kill_switch_reason = ""
+
+    def check_kill_switch(self, pnl):
+        """Check if kill switch should be triggered"""
+        if pnl < 0:
+            self.consecutive_losses += 1
+            if self.consecutive_losses >= self.kill_switch_threshold:
+                self.kill_switch_triggered = True
+                self.kill_switch_reason = f"KILL SWITCH ACTIVATED: {self.consecutive_losses} consecutive losses reached threshold of {self.kill_switch_threshold}"
+                print(f"\n🛑 {self.kill_switch_reason}")
+                print(f"🛑 BOT AUTOMATICALLY STOPPED FOR YOUR PROTECTION")
+                print(f"🛑 Last {self.consecutive_losses} trades were losses")
+                return True
+        else:
+            # Reset streak on profitable trade
+            if self.consecutive_losses > 0:
+                print(f"✅ Loss streak broken! Was {self.consecutive_losses} consecutive losses")
+            self.consecutive_losses = 0
+        return False
+
+    def is_kill_switch_active(self):
+        """Check if kill switch is currently triggered"""
+        return self.kill_switch_triggered
+
+    def reset_kill_switch(self):
+        """Reset kill switch - call this manually when you want to resume trading"""
+        self.kill_switch_triggered = False
+        self.consecutive_losses = 0
+        self.kill_switch_reason = ""
+        print("🔄 Kill switch manually reset - trading can resume")
+
     def run_once(self):
         try:
+            # NEW: Check if kill switch is active
+            if self.kill_switch_triggered:
+                print(f"🛑 Trading halted: {self.kill_switch_reason}")
+                return  # Stop all trading activity
+
             df = self.iface.fetch_ohlcv(self.symbol)
             if df.empty:
                 return
@@ -52,6 +92,10 @@ class TradingBot:
                         else:
                             pnl = -random.uniform(10, 45)
 
+                    # NEW: Check kill switch BEFORE placing order
+                    if self.check_kill_switch(pnl):
+                        return  # Stop immediately if kill switch triggered
+
                     order = self.iface.place_order(self.symbol, side, pos_size)
 
                     # Get trading mode info safely
@@ -82,7 +126,10 @@ class TradingBot:
                     trade_amt = f"${self.trade_amount}" if self.trade_amount else f"{pos_size} units"
                     pnl_sign = "+" if pnl >= 0 else ""
 
-                    print(f"{mode_emoji} TRADE #{self.trade_count} [{strategy_display}]: {side.upper()} {trade_amt} {symbol_display} at ${last_price:.2f} | P&L: {pnl_sign}${pnl:.2f} | MODE: {trading_mode}")
+                    # NEW: Enhanced output with loss streak info
+                    streak_info = f" | Losses: {self.consecutive_losses}/{self.kill_switch_threshold}" if self.consecutive_losses > 0 else ""
+
+                    print(f"{mode_emoji} TRADE #{self.trade_count} [{strategy_display}]: {side.upper()} {trade_amt} {symbol_display} at ${last_price:.2f} | P&L: {pnl_sign}${pnl:.2f} | MODE: {trading_mode}{streak_info}")
 
         except Exception as e:
             print(f"Bot error: {e}")
