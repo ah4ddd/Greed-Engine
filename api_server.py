@@ -165,7 +165,11 @@ def load_configuration():
 @app.route('/api/ohlcv', methods=['GET'])
 def get_ohlcv():
     """Get candlestick data for charts"""
-    symbol = request.args.get('symbol', 'BTC/USDT')
+    # FIXED: No default fallback to BTC/USDT - require symbol parameter
+    symbol = request.args.get('symbol')
+    if not symbol:
+        return jsonify({'error': 'Symbol parameter is required'}), 400
+
     timeframe = request.args.get('timeframe', '1m')
     limit = int(request.args.get('limit', 100))
     trading_mode = request.args.get('trading_mode', 'spot')
@@ -198,7 +202,11 @@ def get_ohlcv():
 @app.route('/api/current-price', methods=['GET'])
 def get_current_price():
     """Get current price for a symbol"""
-    symbol = request.args.get('symbol', 'BTC/USDT')
+    # FIXED: No default fallback to BTC/USDT - require symbol parameter
+    symbol = request.args.get('symbol')
+    if not symbol:
+        return jsonify({'error': 'Symbol parameter is required'}), 400
+
     trading_mode = request.args.get('trading_mode', 'spot')
 
     try:
@@ -223,7 +231,11 @@ def start_bot():
     api_key = data.get('api_key', '')
     api_secret = data.get('api_secret', '')
     exchange = data.get('exchange', 'binance')
-    symbol = data.get('symbol', 'BTC/USDT')
+    # FIXED: No default fallback - require symbol to be provided
+    symbol = data.get('symbol')
+    if not symbol:
+        return jsonify({"error": "Trading pair (symbol) is required"}), 400
+
     real_mode = data.get('real_mode', False)
     risk = float(data.get('risk', 1.0))
     stop_loss = float(data.get('stop_loss', 1.0))
@@ -297,7 +309,7 @@ def start_bot():
         kill_switch_info = f" | Kill Switch: {kill_switch_threshold} losses"
 
         return jsonify({
-            "message": f"Bot started successfully using {strategy_name}{trade_info}{mode_info}{db_info}{kill_switch_info}"
+            "message": f"Bot started successfully trading {symbol} using {strategy_name}{trade_info}{mode_info}{db_info}{kill_switch_info}"
         })
 
     except Exception as e:
@@ -404,7 +416,7 @@ def test_binance_connection():
         # Try to fetch account balance (doesn't cost money)
         balance = test_interface.get_balance('USDT')
 
-        # Try to fetch current price (doesn't cost money)
+        # Try to fetch current price (doesn't cost money) - FIXED: Use BTC/USDT only for connection test
         df = test_interface.fetch_ohlcv('BTC/USDT', '1m', 1)
         current_price = float(df['close'].iloc[-1])
 
@@ -422,7 +434,11 @@ def test_binance_connection():
 @app.route('/api/backtest', methods=['POST'])
 def backtest():
     data = request.get_json()
-    symbol = data.get('symbol', 'BTC/USDT')
+    # FIXED: No default fallback - require symbol to be provided
+    symbol = data.get('symbol')
+    if not symbol:
+        return jsonify({'error': 'Symbol parameter is required'}), 400
+
     years = int(data.get('years', 2))
     risk = float(data.get('risk', 1.0))
     stop_loss = float(data.get('stop_loss', 1.0))

@@ -4,6 +4,12 @@ import axios from 'axios';
 function Settings({ settings, setSettings }) {
     const [saveMessage, setSaveMessage] = useState('');
     const [loading, setLoading] = useState(false);
+    const [symbolInput, setSymbolInput] = useState(''); // Local state for symbol input
+
+    // Initialize local symbol input from settings
+    useEffect(() => {
+        setSymbolInput(settings.symbol || '');
+    }, [settings.symbol]);
 
     // Load saved configuration on component mount
     useEffect(() => {
@@ -28,6 +34,12 @@ function Settings({ settings, setSettings }) {
             ...prev,
             [field]: value
         }));
+    };
+
+    // Special handler for symbol that updates both local state and settings
+    const handleSymbolChange = (value) => {
+        setSymbolInput(value); // Update local state immediately
+        handleChange('symbol', value); // Update settings
     };
 
     const testConnection = async () => {
@@ -61,10 +73,9 @@ function Settings({ settings, setSettings }) {
                 risk: settings.risk !== undefined ? settings.risk : 1.0,
                 stop_loss: settings.stop_loss !== undefined ? settings.stop_loss : 1.0,
                 take_profit: settings.take_profit !== undefined ? settings.take_profit : 2.0,
-                // NEW: Include trading mode and leverage
+                symbol: symbolInput || settings.symbol, // Use local symbol input
                 trading_mode: settings.trading_mode || 'spot',
                 leverage: settings.leverage !== undefined ? settings.leverage : 1,
-                // NEW: Include kill switch threshold
                 kill_switch_threshold: settings.kill_switch_threshold !== undefined ? settings.kill_switch_threshold : 10
             };
 
@@ -136,10 +147,16 @@ function Settings({ settings, setSettings }) {
                     <label>Trading Pair</label>
                     <input
                         type="text"
-                        value={settings.symbol || 'BTC/USDT'}
-                        onChange={(e) => handleChange('symbol', e.target.value)}
-                        placeholder="e.g., BTC/USDT, ETH/USDT"
+                        value={symbolInput}
+                        onChange={(e) => handleSymbolChange(e.target.value)}
+                        placeholder="e.g., BTC/USDT, ETH/USDT, ADA/USDT"
+                        style={{
+                            textTransform: 'uppercase'
+                        }}
                     />
+                    <small style={{ color: '#888', fontSize: '12px', display: 'block', marginTop: '4px' }}>
+                        Popular pairs: ETH/USDT, ADA/USDT, SOL/USDT, MATIC/USDT, DOT/USDT
+                    </small>
                 </div>
 
                 {/* NEW: Trading Mode Selection */}

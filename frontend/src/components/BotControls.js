@@ -45,6 +45,13 @@ function BotControls({ settings, botStatus, onRefresh }) {
     // Fetch live chart data and calculate moving averages
     const fetchStrategyData = async () => {
         try {
+            // FIXED: Only fetch data if we have a valid symbol
+            if (!settings.symbol) {
+                console.warn('No trading symbol set, skipping chart data fetch');
+                generateDemoStrategyData();
+                return;
+            }
+
             const [ohlcvRes, tradesRes] = await Promise.all([
                 axios.get(`/api/ohlcv?symbol=${settings.symbol}&timeframe=1m&limit=50`),
                 axios.get('/api/trades')
@@ -117,13 +124,23 @@ function BotControls({ settings, botStatus, onRefresh }) {
     };
 
     const generateDemoStrategyData = () => {
-        const basePrice = 58000;
+        // FIXED: Generate demo data based on current symbol or use a generic price
+        const symbolBase = settings.symbol ? settings.symbol.split('/')[0] : 'DEMO';
+        let basePrice = 100; // Default demo price
+
+        // Set more realistic demo prices based on common cryptocurrencies
+        if (symbolBase.includes('BTC')) basePrice = 58000;
+        else if (symbolBase.includes('ETH')) basePrice = 3500;
+        else if (symbolBase.includes('ADA')) basePrice = 0.5;
+        else if (symbolBase.includes('SOL')) basePrice = 150;
+        else if (symbolBase.includes('DOT')) basePrice = 25;
+
         const demoData = Array.from({ length: 30 }, (_, i) => {
-            const volatility = 100;
-            const trend = Math.sin(i * 0.1) * 300;
+            const volatility = basePrice * 0.002; // 0.2% volatility
+            const trend = Math.sin(i * 0.1) * (basePrice * 0.005);
             const price = basePrice + trend + (Math.random() - 0.5) * volatility;
-            const fastMA = price + (Math.random() - 0.5) * 50;
-            const slowMA = price + (Math.random() - 0.5) * 100;
+            const fastMA = price + (Math.random() - 0.5) * (basePrice * 0.001);
+            const slowMA = price + (Math.random() - 0.5) * (basePrice * 0.002);
 
             return {
                 time: new Date(Date.now() - (30 - i) * 60000).toLocaleTimeString(),
@@ -208,6 +225,12 @@ function BotControls({ settings, botStatus, onRefresh }) {
     }, [botStatus.running, settings.symbol]);
 
     const startBot = async () => {
+        // FIXED: Validate symbol before starting
+        if (!settings.symbol || settings.symbol.trim() === '') {
+            setMessage('Error: Please set a trading pair in Settings first');
+            return;
+        }
+
         setLoading(true);
         setMessage('Initializing trading engine...');
         try {
@@ -217,7 +240,7 @@ function BotControls({ settings, botStatus, onRefresh }) {
                 trade_amount: tradeAmount
             };
             await axios.post('/api/start', botSettings);
-            setMessage('Trading engine activated! 🚀');
+            setMessage('Trading engine activated!');
             setLastAction('Bot started');
             onRefresh();
         } catch (error) {
@@ -231,7 +254,7 @@ function BotControls({ settings, botStatus, onRefresh }) {
         setMessage('Shutting down trading engine...');
         try {
             await axios.post('/api/stop');
-            setMessage('Trading engine deactivated ⏹️');
+            setMessage('Trading engine deactivated');
             setLastAction('Bot stopped');
             onRefresh();
         } catch (error) {
@@ -241,6 +264,12 @@ function BotControls({ settings, botStatus, onRefresh }) {
     };
 
     const runBacktest = async () => {
+        // FIXED: Validate symbol before backtesting
+        if (!settings.symbol || settings.symbol.trim() === '') {
+            setMessage('Error: Please set a trading pair in Settings first');
+            return;
+        }
+
         setLoading(true);
         setMessage('Running historical analysis...');
         try {
@@ -251,15 +280,13 @@ function BotControls({ settings, botStatus, onRefresh }) {
                 stop_loss: settings.stop_loss,
                 take_profit: settings.take_profit
             });
-            setMessage('Backtest analysis complete: Strategy validation successful 📊');
+            setMessage('Backtest analysis complete: Strategy validation successful');
             setLastAction('Backtest completed');
         } catch (error) {
             setMessage('Error running backtest: ' + error.message);
         }
         setLoading(false);
     };
-
-    // Helper function removed since we're not using position display anymore
 
     const tradeMarkers = getTradeMarkers();
 
@@ -469,7 +496,7 @@ function BotControls({ settings, botStatus, onRefresh }) {
                 <div className="strategy-legend">
                     <div className="legend-item">
                         <span className="legend-line price-line"></span>
-                        <span>Bitcoin Price</span>
+                        <span>{settings.symbol ? settings.symbol.split('/')[0] : 'Crypto'} Price</span>
                     </div>
                     <div className="legend-item">
                         <span className="legend-line fast-ma-line"></span>
@@ -495,11 +522,11 @@ function BotControls({ settings, botStatus, onRefresh }) {
                 <div className="config-grid">
                     <div className="config-item">
                         <span className="config-label">Exchange</span>
-                        <span className="config-value">{settings.exchange.toUpperCase()}</span>
+                        <span className="config-value">{settings.exchange?.toUpperCase() || 'NOT SET'}</span>
                     </div>
                     <div className="config-item">
                         <span className="config-label">Trading Pair</span>
-                        <span className="config-value">{settings.symbol}</span>
+                        <span className="config-value">{settings.symbol || 'NOT SET'}</span>
                     </div>
                     <div className="config-item">
                         <span className="config-label">Trade Amount</span>
