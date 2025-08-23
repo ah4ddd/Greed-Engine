@@ -72,7 +72,7 @@ function TradeHistory({ trades }) {
                     <span>Side</span>
                     <span>Size</span>
                     <span>Price</span>
-                    <span>Capital Used</span>
+                    <span>USD Amount</span>
                     <span>P&L</span>
                     <span>ROI %</span>
                     {showDetails && (
@@ -87,7 +87,7 @@ function TradeHistory({ trades }) {
 
                 <div className="table-body">
                     {trades.map((trade, index) => {
-                        const capitalUsed = trade.price * trade.size;
+                        const capitalUsed = trade.usd_amount || (trade.price * trade.size);
                         const roi = capitalUsed > 0 ? ((trade.pnl / capitalUsed) * 100) : 0;
 
                         return (

@@ -18,6 +18,8 @@ class Trade(Base):
     pnl = Column(Float, default=0)
     timestamp = Column(DateTime)
 
-    # NEW: Add trading mode and leverage tracking
-    trading_mode = Column(String, default='spot')  # 'spot' or 'futures'
-    leverage = Column(Integer, default=1)  # leverage used (1 for spot, 2-10+ for futures)
+    # EXISTING
+    trading_mode = Column(String, default='spot')
+    leverage = Column(Integer, default=1)
+    # NEW: exact USD amount for this trade
+    usd_amount = Column(Float, default=0)

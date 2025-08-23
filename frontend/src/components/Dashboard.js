@@ -1,7 +1,65 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import LiveChart from './LiveChart';
 
 function Dashboard({ balance, trades, currentSymbol = 'BTC/USDT' }) {
+    const [tradingMode, setTradingMode] = useState('paper');
+    const [databaseStats, setDatabaseStats] = useState(null);
+    const [switching, setSwitching] = useState(false);
+
+    // Fetch current trading mode on component mount
+    useEffect(() => {
+        fetchTradingMode();
+        fetchDatabaseStats();
+    }, []);
+
+    const fetchTradingMode = async () => {
+        try {
+            const response = await fetch('/api/trading-mode');
+            const data = await response.json();
+            setTradingMode(data.mode);
+        } catch (error) {
+            console.error('Error fetching trading mode:', error);
+        }
+    };
+
+    const fetchDatabaseStats = async () => {
+        try {
+            const response = await fetch('/api/database-stats');
+            const data = await response.json();
+            setDatabaseStats(data);
+        } catch (error) {
+            console.error('Error fetching database stats:', error);
+        }
+    };
+
+    const handleModeSwitch = async (newMode) => {
+        if (switching || newMode === tradingMode) return;
+
+        setSwitching(true);
+        try {
+            const response = await fetch('/api/trading-mode', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ mode: newMode }),
+            });
+
+            const data = await response.json();
+            if (response.ok) {
+                setTradingMode(newMode);
+                // Refresh the page to reload data from the new database
+                window.location.reload();
+            } else {
+                alert(`Error: ${data.error}`);
+            }
+        } catch (error) {
+            console.error('Error switching trading mode:', error);
+            alert('Error switching trading mode');
+        } finally {
+            setSwitching(false);
+        }
+    };
 
     // Calculate comprehensive stats including Risk-Reward Ratio
     const calculateStats = () => {
@@ -66,6 +124,41 @@ function Dashboard({ balance, trades, currentSymbol = 'BTC/USDT' }) {
 
     return (
         <div className="dashboard">
+            {/* NEW: Trading Mode Switcher */}
+            <div className="trading-mode-switcher">
+                <h3>Trading Mode</h3>
+                <div className="mode-buttons">
+                    <button
+                        className={`mode-btn ${tradingMode === 'paper' ? 'active' : ''}`}
+                        onClick={() => handleModeSwitch('paper')}
+                        disabled={switching}
+                    >
+                        Paper Trading
+                        {databaseStats && (
+                            <span className="mode-stats">
+                                {databaseStats.paper.trade_count} trades
+                            </span>
+                        )}
+                    </button>
+                    <button
+                        className={`mode-btn ${tradingMode === 'live' ? 'active' : ''}`}
+                        onClick={() => handleModeSwitch('live')}
+                        disabled={switching}
+                    >
+                        Live Trading
+                        {databaseStats && (
+                            <span className="mode-stats">
+                                {databaseStats.live.trade_count} trades
+                            </span>
+                        )}
+                    </button>
+                </div>
+                {switching && <div className="switching-indicator">Switching modes...</div>}
+                <div className="current-mode-indicator">
+                    Currently viewing: <strong>{tradingMode.toUpperCase()}</strong> trading data
+                </div>
+            </div>
+
             <div className="stats-grid">
                 <div className="stat-card">
                     <h3>Account Balance</h3>
@@ -89,7 +182,7 @@ function Dashboard({ balance, trades, currentSymbol = 'BTC/USDT' }) {
                 </div>
             </div>
 
-            {/* NEW: Enhanced Performance Metrics */}
+            {/* Enhanced Performance Metrics */}
             <div className="performance-metrics">
                 <div className="metrics-grid">
                     <div className="metric-card">
@@ -127,7 +220,7 @@ function Dashboard({ balance, trades, currentSymbol = 'BTC/USDT' }) {
             <LiveChart symbol={currentSymbol} trades={latestTrades} />
 
             <div className="recent-trades">
-                <h3>Recent Trades</h3>
+                <h3>Recent Trades ({tradingMode.toUpperCase()})</h3>
                 <div className="trades-list">
                     {latestTrades.map((trade, index) => (
                         <div key={trade.id || `${trade.timestamp}-${index}`} className={`trade-item ${trade.pnl >= 0 ? 'profit-trade' : 'loss-trade'}`}>
@@ -144,7 +237,7 @@ function Dashboard({ balance, trades, currentSymbol = 'BTC/USDT' }) {
                         </div>
                     ))}
                     {latestTrades.length === 0 && (
-                        <div className="no-trades">No trades yet - Start the bot to begin trading!</div>
+                        <div className="no-trades">No trades yet in {tradingMode.toUpperCase()} mode - Start the bot to begin trading!</div>
                     )}
                 </div>
             </div>

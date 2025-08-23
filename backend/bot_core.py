@@ -15,7 +15,6 @@ class TradingBot:
         self.trade_amount = trade_amount
         self.last_trade_time = 0
         self.trade_count = 0
-
         # NEW: Kill Switch Protection Variables
         self.consecutive_losses = 0
         self.kill_switch_threshold = kill_switch_threshold
@@ -34,7 +33,6 @@ class TradingBot:
                 print(f"🛑 Last {self.consecutive_losses} trades were losses")
                 return True
         else:
-            # Reset streak on profitable trade
             if self.consecutive_losses > 0:
                 print(f"✅ Loss streak broken! Was {self.consecutive_losses} consecutive losses")
             self.consecutive_losses = 0
@@ -56,7 +54,7 @@ class TradingBot:
             # NEW: Check if kill switch is active
             if self.kill_switch_triggered:
                 print(f"🛑 Trading halted: {self.kill_switch_reason}")
-                return  # Stop all trading activity
+                return
 
             df = self.iface.fetch_ohlcv(self.symbol)
             if df.empty:
@@ -79,6 +77,7 @@ class TradingBot:
                     if pos_size < 0.001:
                         pos_size = 0.001
 
+                    # P&L calculation
                     if self.strategy_type == "custom":
                         if random.random() < 0.65:
                             profit_potential = self.trade_amount * (self.take_profit / 100)
@@ -92,19 +91,36 @@ class TradingBot:
                         else:
                             pnl = -random.uniform(10, 45)
 
-                    # NEW: Check kill switch BEFORE placing order
+                    # NEW: Kill switch check before placing order
                     if self.check_kill_switch(pnl):
-                        return  # Stop immediately if kill switch triggered
+                        return
 
                     order = self.iface.place_order(self.symbol, side, pos_size)
 
-                    # Get trading mode info safely
                     trading_mode = getattr(self.iface, 'trading_mode', 'spot').upper()
                     leverage = getattr(self.iface, 'leverage', 1)
 
-                    # Log trade - handle database errors gracefully
+                    # Determine display USD amount
+                    if self.trade_amount:
+                        display_usd_amount = self.trade_amount
+                    else:
+                        display_usd_amount = pos_size * last_price
+
+                    # Log trade with correct USD amount
                     try:
-                        log_trade(self.symbol, side, pos_size, last_price, self.stop_loss, self.take_profit, "EXECUTED", pnl, trading_mode, leverage)
+                        log_trade(
+                            self.symbol,
+                            side,
+                            pos_size,
+                            last_price,
+                            self.stop_loss,
+                            self.take_profit,
+                            "EXECUTED",
+                            pnl,
+                            trading_mode,
+                            leverage,
+                            display_usd_amount  # NEW param
+                        )
                     except Exception as db_error:
                         print(f"Database logging error: {db_error}")
 
@@ -113,23 +129,22 @@ class TradingBot:
 
                     # Enhanced terminal output
                     strategy_name = "CUSTOM" if self.strategy_type == "custom" else "DEFAULT MA"
-
                     if trading_mode == "FUTURES" and leverage > 1:
                         strategy_display = f"{strategy_name}-FUTURES-{leverage}X"
                         mode_emoji = "🚀"
-                        symbol_display = getattr(self.iface, 'format_symbol_for_mode', lambda x: x)(self.symbol)
+                        symbol_display = self.iface.format_symbol_for_mode(self.symbol)
                     else:
                         strategy_display = f"{strategy_name}-SPOT"
                         mode_emoji = "📊"
                         symbol_display = self.symbol
 
-                    trade_amt = f"${self.trade_amount}" if self.trade_amount else f"{pos_size} units"
+                    trade_amt = f"${display_usd_amount:.2f}"
                     pnl_sign = "+" if pnl >= 0 else ""
-
-                    # NEW: Enhanced output with loss streak info
                     streak_info = f" | Losses: {self.consecutive_losses}/{self.kill_switch_threshold}" if self.consecutive_losses > 0 else ""
-
-                    print(f"{mode_emoji} TRADE #{self.trade_count} [{strategy_display}]: {side.upper()} {trade_amt} {symbol_display} at ${last_price:.2f} | P&L: {pnl_sign}${pnl:.2f} | MODE: {trading_mode}{streak_info}")
-
+                    print(
+                        f"{mode_emoji} TRADE #{self.trade_count} [{strategy_display}]: "
+                        f"{side.upper()} {trade_amt} {symbol_display} "
+                        f"at ${last_price:.2f} | P&L: {pnl_sign}${pnl:.2f} | MODE: {trading_mode}{streak_info}"
+                    )
         except Exception as e:
             print(f"Bot error: {e}")

@@ -2,7 +2,9 @@ from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 from backend.exchange import TradingInterface
 from backend.bot_core import TradingBot
-from backend.db import init_db, get_account_balance, get_trade_history, save_settings, log_trade
+from backend.db import (init_all_databases, get_account_balance, get_trade_history,
+save_settings, log_trade, set_trading_mode, get_trading_mode,
+migrate_existing_database)
 from backend.backtest import run_backtest
 import os
 import threading
@@ -12,7 +14,10 @@ import json
 
 app = Flask(__name__, static_folder='frontend/build')
 CORS(app)
-init_db()
+
+# Migrate existing database before initialization
+migrate_existing_database()
+init_all_databases()
 
 # Bot state
 bot_running = False
@@ -60,6 +65,72 @@ def get_balance():
 def get_trades():
     trades = get_trade_history()
     return jsonify(trades)
+
+# NEW: Trading Mode Management
+@app.route('/api/trading-mode', methods=['GET'])
+def get_current_trading_mode():
+    """Get current trading mode"""
+    return jsonify({
+        'mode': get_trading_mode(),
+        'available_modes': ['paper', 'live']
+    })
+
+@app.route('/api/trading-mode', methods=['POST'])
+def set_current_trading_mode():
+    """Set current trading mode"""
+    data = request.get_json()
+    new_mode = data.get('mode', 'paper').lower()
+
+    if new_mode not in ['paper', 'live']:
+        return jsonify({'error': 'Invalid trading mode. Must be "paper" or "live"'}), 400
+
+    # Stop bot if running when switching modes
+    global bot_running
+    if bot_running:
+        bot_running = False
+        time.sleep(1)  # Give bot time to stop
+
+    set_trading_mode(new_mode)
+
+    # Update environment variable
+    os.environ['TRADING_MODE'] = new_mode
+
+    return jsonify({
+        'message': f'Trading mode switched to {new_mode}',
+        'mode': new_mode
+    })
+
+@app.route('/api/database-stats', methods=['GET'])
+def get_database_stats():
+    """Get stats from both databases for comparison"""
+    current_mode = get_trading_mode()
+
+    # Get paper stats
+    set_trading_mode('paper')
+    paper_balance = get_account_balance()
+    paper_trades = get_trade_history()
+
+    # Get live stats
+    set_trading_mode('live')
+    live_balance = get_account_balance()
+    live_trades = get_trade_history()
+
+    # Restore original mode
+    set_trading_mode(current_mode)
+
+    return jsonify({
+        'current_mode': current_mode,
+        'paper': {
+            'balance': paper_balance,
+            'trade_count': len(paper_trades),
+            'recent_trades': paper_trades[:5] if paper_trades else []
+        },
+        'live': {
+            'balance': live_balance,
+            'trade_count': len(live_trades),
+            'recent_trades': live_trades[:5] if live_trades else []
+        }
+    })
 
 # Save configuration endpoint
 @app.route('/api/save-config', methods=['POST'])
@@ -167,6 +238,10 @@ def start_bot():
     # NEW: Get kill switch threshold
     kill_switch_threshold = int(data.get('kill_switch_threshold', 10))
 
+    # NEW: Set database mode based on real_mode
+    db_mode = 'live' if real_mode else 'paper'
+    set_trading_mode(db_mode)
+
     if bot_running:
         return jsonify({"error": "Bot is already running"}), 400
 
@@ -195,7 +270,7 @@ def start_bot():
 
                     # NEW: Check if kill switch was triggered
                     if current_bot.is_kill_switch_active():
-                        print("🛑 Kill switch triggered - stopping bot automatically")
+                        print("Kill switch triggered - stopping bot automatically")
                         bot_running = False
                         break
 
@@ -217,11 +292,12 @@ def start_bot():
         if trading_mode == "futures" and leverage > 1:
             mode_info += f" (Leverage: {leverage}x)"
 
-        # NEW: Include kill switch info
+        # NEW: Include database mode and kill switch info
+        db_info = f" | Database: {db_mode.upper()}"
         kill_switch_info = f" | Kill Switch: {kill_switch_threshold} losses"
 
         return jsonify({
-            "message": f"Bot started successfully using {strategy_name}{trade_info}{mode_info}{kill_switch_info}"
+            "message": f"Bot started successfully using {strategy_name}{trade_info}{mode_info}{db_info}{kill_switch_info}"
         })
 
     except Exception as e:
@@ -236,7 +312,10 @@ def stop_bot():
 @app.route('/api/status', methods=['GET'])
 def bot_status():
     global current_bot
-    status = {"running": bot_running}
+    status = {
+        "running": bot_running,
+        "trading_mode": get_trading_mode()
+    }
 
     # NEW: Add kill switch status info
     if current_bot:
@@ -331,13 +410,13 @@ def test_binance_connection():
 
         return jsonify({
             "success": True,
-            "message": f"✅ API keys work! Connected to {exchange.capitalize()} successfully",
+            "message": f"API keys work! Connected to {exchange.capitalize()} successfully",
             "your_usdt_balance": balance['free'],
             "current_btc_price": current_price
         })
     except Exception as e:
         return jsonify({
-            "error": f"❌ API connection failed: {str(e)}"
+            "error": f"API connection failed: {str(e)}"
         }), 500
 
 @app.route('/api/backtest', methods=['POST'])
