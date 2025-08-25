@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceDot } from 'recharts';
 import axios from 'axios';
 
@@ -6,11 +6,8 @@ function BotControls({ settings, botStatus, onRefresh }) {
     const [loading, setLoading] = useState(false);
     const [message, setMessage] = useState('');
     const [activity, setActivity] = useState('Idle');
-    const [lastAction, setLastAction] = useState('');
     const [chartData, setChartData] = useState([]);
     const [trades, setTrades] = useState([]);
-    const [movingAverages, setMovingAverages] = useState({ fast: [], slow: [] });
-    const [currentPosition, setCurrentPosition] = useState(null);
     const [liveStats, setLiveStats] = useState({
         todayPnl: 0,
         totalTrades: 0,
@@ -19,9 +16,96 @@ function BotControls({ settings, botStatus, onRefresh }) {
         avgLoss: 0
     });
 
-    // Handle trade amount change - store locally and pass to API
+    // EXISTING multi-pair trading state
+    const [multiPairMode, setMultiPairMode] = useState(() => {
+        const saved = localStorage.getItem('bot_multi_pair_mode');
+        return saved ? JSON.parse(saved) : false;
+    });
+
+    const [selectedPairs, setSelectedPairs] = useState(() => {
+        const saved = localStorage.getItem('bot_selected_pairs');
+        return saved ? JSON.parse(saved) : ['BTC/USDT'];
+    });
+
+    // NEW: Aggressive trading mode state
+    const [aggressiveMode, setAggressiveMode] = useState(() => {
+        const saved = localStorage.getItem('bot_aggressive_mode');
+        return saved ? JSON.parse(saved) : false;
+    });
+
+    const [superAggressiveMode, setSuperAggressiveMode] = useState(() => {
+        const saved = localStorage.getItem('bot_super_aggressive_mode');
+        return saved ? JSON.parse(saved) : false;
+    });
+
+    // NEW: Performance tracking state
+    const [performanceStats, setPerformanceStats] = useState({
+        total_pnl: 0,
+        total_trades: 0,
+        win_count: 0,
+        loss_count: 0,
+        win_rate: 0,
+        consecutive_losses: 0,
+        open_positions: 0
+    });
+
+    const popularPairs = [
+        'BTC/USDT', 'ETH/USDT', 'ADA/USDT', 'SOL/USDT', 'MATIC/USDT',
+        'DOT/USDT', 'AVAX/USDT', 'LINK/USDT', 'UNI/USDT', 'ATOM/USDT',
+        'LTC/USDT', 'XRP/USDT', 'DOGE/USDT', 'BNB/USDT', 'TRX/USDT'
+    ];
+
+    // Save aggressive mode settings
+    const handleAggressiveModeChange = (enabled) => {
+        setAggressiveMode(enabled);
+        localStorage.setItem('bot_aggressive_mode', JSON.stringify(enabled));
+        if (enabled) {
+            setSuperAggressiveMode(false);
+            localStorage.setItem('bot_super_aggressive_mode', JSON.stringify(false));
+        }
+    };
+
+    const handleSuperAggressiveModeChange = (enabled) => {
+        setSuperAggressiveMode(enabled);
+        localStorage.setItem('bot_super_aggressive_mode', JSON.stringify(enabled));
+        if (enabled) {
+            setAggressiveMode(false);
+            localStorage.setItem('bot_aggressive_mode', JSON.stringify(false));
+            setMultiPairMode(true); // Force multi-pair for super aggressive
+        }
+    };
+
+    // EXISTING multi-pair functions
+    const handleMultiPairModeChange = (enabled) => {
+        setMultiPairMode(enabled);
+        localStorage.setItem('bot_multi_pair_mode', JSON.stringify(enabled));
+        if (!enabled && superAggressiveMode) {
+            setSuperAggressiveMode(false);
+            localStorage.setItem('bot_super_aggressive_mode', JSON.stringify(false));
+        }
+    };
+
+    const handleSelectedPairsChange = (pairs) => {
+        setSelectedPairs(pairs);
+        localStorage.setItem('bot_selected_pairs', JSON.stringify(pairs));
+    };
+
+    const addPair = (pair) => {
+        if (!selectedPairs.includes(pair) && selectedPairs.length < 8) {
+            const newPairs = [...selectedPairs, pair];
+            handleSelectedPairsChange(newPairs);
+        }
+    };
+
+    const removePair = (pair) => {
+        if (selectedPairs.length > 1) {
+            const newPairs = selectedPairs.filter(p => p !== pair);
+            handleSelectedPairsChange(newPairs);
+        }
+    };
+
+    // Handle trade amount change
     const [tradeAmount, setTradeAmount] = useState(() => {
-        // Get from localStorage first, then settings, then default
         const saved = localStorage.getItem('bot_trade_amount');
         if (saved) return parseFloat(saved);
         return settings.trade_amount || 1000;
@@ -30,39 +114,56 @@ function BotControls({ settings, botStatus, onRefresh }) {
     const handleTradeAmountChange = (value) => {
         const amount = parseFloat(value);
         setTradeAmount(amount);
-        // Save to localStorage so it persists
         localStorage.setItem('bot_trade_amount', amount.toString());
     };
 
-    // Only update from settings if we don't have a saved value
+    // Load settings on mount
     useEffect(() => {
-        const saved = localStorage.getItem('bot_trade_amount');
-        if (!saved && settings.trade_amount) {
-            setTradeAmount(settings.trade_amount);
-        }
+        const savedMode = localStorage.getItem('bot_multi_pair_mode');
+        const savedPairs = localStorage.getItem('bot_selected_pairs');
+        const savedAmount = localStorage.getItem('bot_trade_amount');
+        const savedAggressive = localStorage.getItem('bot_aggressive_mode');
+        const savedSuperAggressive = localStorage.getItem('bot_super_aggressive_mode');
+
+        if (savedMode !== null) setMultiPairMode(JSON.parse(savedMode));
+        if (savedPairs !== null) setSelectedPairs(JSON.parse(savedPairs));
+        if (savedAggressive !== null) setAggressiveMode(JSON.parse(savedAggressive));
+        if (savedSuperAggressive !== null) setSuperAggressiveMode(JSON.parse(savedSuperAggressive));
+        if (!savedAmount && settings.trade_amount) setTradeAmount(settings.trade_amount);
     }, [settings.trade_amount]);
 
-    // Fetch live chart data and calculate moving averages
-    const fetchStrategyData = async () => {
+    // NEW: Fetch performance stats for aggressive bots
+    const fetchPerformanceStats = useCallback(async () => {
+        if (botStatus.running && (aggressiveMode || superAggressiveMode)) {
+            try {
+                const response = await axios.get('/api/bot-performance');
+                setPerformanceStats(response.data);
+            } catch (error) {
+                console.log('Performance stats not available (normal for non-aggressive bots)');
+            }
+        }
+    }, [botStatus.running, aggressiveMode, superAggressiveMode]);
+
+    // Fetch live chart data
+    const fetchStrategyData = useCallback(async () => {
         try {
-            // FIXED: Only fetch data if we have a valid symbol
-            if (!settings.symbol) {
+            const symbolToFetch = multiPairMode ? selectedPairs[0] : settings.symbol;
+
+            if (!symbolToFetch) {
                 console.warn('No trading symbol set, skipping chart data fetch');
                 generateDemoStrategyData();
                 return;
             }
 
+            // Use fast API endpoint for aggressive modes
+            const endpoint = (aggressiveMode || superAggressiveMode) ? '/api/ohlcv-fast' : '/api/ohlcv';
             const [ohlcvRes, tradesRes] = await Promise.all([
-                axios.get(`/api/ohlcv?symbol=${settings.symbol}&timeframe=1m&limit=50`),
+                axios.get(`${endpoint}?symbol=${symbolToFetch}&timeframe=${(aggressiveMode || superAggressiveMode) ? '5m' : '1m'}&limit=50`),
                 axios.get('/api/trades')
             ]);
 
-            // Only fetch position if bot is running
-            let position = null;
-            // Removed position fetching since we're not using it anymore
-
             const ohlcvData = ohlcvRes.data.data;
-            const recentTrades = tradesRes.data.slice(-10); // Last 10 trades for markers
+            const recentTrades = tradesRes.data.slice(-10);
 
             // Calculate live statistics
             const todayTrades = tradesRes.data.filter(trade => {
@@ -82,8 +183,6 @@ function BotControls({ settings, botStatus, onRefresh }) {
                 avgLoss: losses.length > 0 ? Math.abs(losses.reduce((sum, t) => sum + t.pnl, 0) / losses.length) : 0
             });
 
-            setCurrentPosition(position);
-
             // Calculate moving averages
             const prices = ohlcvData.map(candle => candle.close);
             const fastMA = calculateMovingAverage(prices, 9);
@@ -97,18 +196,16 @@ function BotControls({ settings, botStatus, onRefresh }) {
                 slowMA: slowMA[index],
                 timestamp: candle.timestamp,
                 index: index
-            })).filter(point => point.fastMA && point.slowMA); // Only show where we have both MAs
+            })).filter(point => point.fastMA && point.slowMA);
 
             setChartData(chartPoints);
             setTrades(recentTrades);
-            setMovingAverages({ fast: fastMA, slow: slowMA });
 
         } catch (error) {
             console.error('Error fetching strategy data:', error);
-            // Generate demo data for visualization
             generateDemoStrategyData();
         }
-    };
+    }, [multiPairMode, selectedPairs, settings.symbol, aggressiveMode, superAggressiveMode]);
 
     const calculateMovingAverage = (prices, period) => {
         const ma = [];
@@ -124,11 +221,9 @@ function BotControls({ settings, botStatus, onRefresh }) {
     };
 
     const generateDemoStrategyData = () => {
-        // FIXED: Generate demo data based on current symbol or use a generic price
-        const symbolBase = settings.symbol ? settings.symbol.split('/')[0] : 'DEMO';
-        let basePrice = 100; // Default demo price
+        const symbolBase = (multiPairMode ? selectedPairs[0] : settings.symbol)?.split('/')[0] || 'DEMO';
+        let basePrice = 100;
 
-        // Set more realistic demo prices based on common cryptocurrencies
         if (symbolBase.includes('BTC')) basePrice = 58000;
         else if (symbolBase.includes('ETH')) basePrice = 3500;
         else if (symbolBase.includes('ADA')) basePrice = 0.5;
@@ -136,7 +231,7 @@ function BotControls({ settings, botStatus, onRefresh }) {
         else if (symbolBase.includes('DOT')) basePrice = 25;
 
         const demoData = Array.from({ length: 30 }, (_, i) => {
-            const volatility = basePrice * 0.002; // 0.2% volatility
+            const volatility = basePrice * 0.002;
             const trend = Math.sin(i * 0.1) * (basePrice * 0.005);
             const price = basePrice + trend + (Math.random() - 0.5) * volatility;
             const fastMA = price + (Math.random() - 0.5) * (basePrice * 0.001);
@@ -205,45 +300,120 @@ function BotControls({ settings, botStatus, onRefresh }) {
                 'Executing strategy logic...'
             ];
 
+            // Aggressive modes have faster activity updates
+            const updateInterval = (aggressiveMode || superAggressiveMode) ? 1000 : 3000;
+
             const interval = setInterval(() => {
-                const randomActivity = activities[Math.floor(Math.random() * activities.length)];
+                let randomActivity;
+                if (superAggressiveMode) {
+                    randomActivity = `SUPER AGGRESSIVE: ${activities[Math.floor(Math.random() * activities.length)]} (${selectedPairs.length} pairs)`;
+                } else if (aggressiveMode) {
+                    randomActivity = `AGGRESSIVE: ${activities[Math.floor(Math.random() * activities.length)]} (5-min candles)`;
+                } else {
+                    randomActivity = activities[Math.floor(Math.random() * activities.length)];
+                }
                 setActivity(randomActivity);
-            }, 3000);
+            }, updateInterval);
 
             return () => clearInterval(interval);
         } else {
             setActivity('Bot stopped - Waiting for commands');
         }
-    }, [botStatus.running]);
+    }, [botStatus.running, aggressiveMode, superAggressiveMode, selectedPairs.length]);
 
     useEffect(() => {
         fetchStrategyData();
+        fetchPerformanceStats();
+
         if (botStatus.running) {
-            const interval = setInterval(fetchStrategyData, 10000); // Update every 10 seconds
+            // More frequent updates for aggressive modes
+            const updateInterval = (aggressiveMode || superAggressiveMode) ? 3000 : 5000;
+            const interval = setInterval(() => {
+                fetchStrategyData();
+                fetchPerformanceStats();
+            }, updateInterval);
             return () => clearInterval(interval);
         }
-    }, [botStatus.running, settings.symbol]);
+    }, [botStatus.running, fetchStrategyData, fetchPerformanceStats]);
 
     const startBot = async () => {
-        // FIXED: Validate symbol before starting
-        if (!settings.symbol || settings.symbol.trim() === '') {
+        // Enhanced validation
+        if (!multiPairMode && (!settings.symbol || settings.symbol.trim() === '')) {
             setMessage('Error: Please set a trading pair in Settings first');
+            return;
+        }
+
+        if (multiPairMode && selectedPairs.length === 0) {
+            setMessage('Error: Please select at least one trading pair for multi-pair mode');
+            return;
+        }
+
+        if (superAggressiveMode && selectedPairs.length < 3) {
+            setMessage('Error: Super Aggressive mode requires at least 3 trading pairs');
             return;
         }
 
         setLoading(true);
         setMessage('Initializing trading engine...');
+
         try {
-            // Include trade amount in the settings when starting bot
-            const botSettings = {
-                ...settings,
-                trade_amount: tradeAmount
-            };
-            await axios.post('/api/start', botSettings);
-            setMessage('Trading engine activated!');
-            setLastAction('Bot started');
+            let endpoint = '/api/start';
+            let botData = { ...settings, trade_amount: tradeAmount };
+
+            // Determine which bot type to use
+            if (superAggressiveMode) {
+                endpoint = '/api/start-super-aggressive';
+                botData = {
+                    ...settings,
+                    symbols: selectedPairs,
+                    risk: Math.max(settings.risk * 1.5, 3.0), // Higher risk for super aggressive
+                    stop_loss: Math.max(settings.stop_loss, 1.5),
+                    take_profit: Math.max(settings.take_profit, 2.5),
+                    strategy_type: 'aggressive_ema',
+                    trade_amount: tradeAmount,
+                    kill_switch_threshold: 20
+                };
+            } else if (aggressiveMode) {
+                endpoint = '/api/start-fast';
+                botData = {
+                    ...settings,
+                    symbol: multiPairMode ? selectedPairs[0] : settings.symbol,
+                    risk: Math.max(settings.risk * 1.2, 2.0), // Moderate risk increase
+                    stop_loss: Math.max(settings.stop_loss, 1.5),
+                    take_profit: Math.max(settings.take_profit, 2.0),
+                    strategy_type: 'aggressive_ema',
+                    trade_amount: tradeAmount,
+                    kill_switch_threshold: 15
+                };
+            } else {
+                // Original bot logic
+                botData = {
+                    ...settings,
+                    trade_amount: tradeAmount,
+                    symbol: multiPairMode ? selectedPairs[0] : settings.symbol,
+                    symbols: multiPairMode ? selectedPairs : [settings.symbol],
+                    multi_pair_mode: multiPairMode,
+                    risk: multiPairMode ? Math.max(settings.risk / selectedPairs.length, 0.5) : settings.risk
+                };
+            }
+
+            console.log(`Starting bot with ${endpoint}:`, botData);
+
+            const response = await axios.post(endpoint, botData);
+            setMessage(response.data.message || 'Trading engine activated!');
+
+            // Show mode-specific info
+            if (superAggressiveMode) {
+                setMessage(prev => prev + `\n🚀 SUPER AGGRESSIVE MODE: ${selectedPairs.length} pairs, 15-second checks`);
+            } else if (aggressiveMode) {
+                setMessage(prev => prev + `\n⚡ AGGRESSIVE MODE: 5-minute candles, 30-second cooldown`);
+            } else if (multiPairMode) {
+                setMessage(prev => prev + `\n📊 Multi-pair trading: ${selectedPairs.length} pairs`);
+            }
+
             onRefresh();
         } catch (error) {
+            console.error('Bot start error:', error);
             setMessage('Error starting bot: ' + (error.response?.data?.error || error.message));
         }
         setLoading(false);
@@ -255,7 +425,6 @@ function BotControls({ settings, botStatus, onRefresh }) {
         try {
             await axios.post('/api/stop');
             setMessage('Trading engine deactivated');
-            setLastAction('Bot stopped');
             onRefresh();
         } catch (error) {
             setMessage('Error stopping bot: ' + error.message);
@@ -264,8 +433,9 @@ function BotControls({ settings, botStatus, onRefresh }) {
     };
 
     const runBacktest = async () => {
-        // FIXED: Validate symbol before backtesting
-        if (!settings.symbol || settings.symbol.trim() === '') {
+        const symbolToTest = multiPairMode ? selectedPairs[0] : settings.symbol;
+
+        if (!symbolToTest || symbolToTest.trim() === '') {
             setMessage('Error: Please set a trading pair in Settings first');
             return;
         }
@@ -273,15 +443,17 @@ function BotControls({ settings, botStatus, onRefresh }) {
         setLoading(true);
         setMessage('Running historical analysis...');
         try {
-            const response = await axios.post('/api/backtest', {
-                symbol: settings.symbol,
+            await axios.post('/api/backtest', {
+                symbol: symbolToTest,
                 years: 1,
-                risk: settings.risk,
+                risk: multiPairMode ? settings.risk / selectedPairs.length : settings.risk,
                 stop_loss: settings.stop_loss,
-                take_profit: settings.take_profit
+                take_profit: settings.take_profit,
+                multi_pair_mode: multiPairMode,
+                symbols: multiPairMode ? selectedPairs : [symbolToTest],
+                aggressive_mode: aggressiveMode || superAggressiveMode
             });
             setMessage('Backtest analysis complete: Strategy validation successful');
-            setLastAction('Backtest completed');
         } catch (error) {
             setMessage('Error running backtest: ' + error.message);
         }
@@ -295,7 +467,158 @@ function BotControls({ settings, botStatus, onRefresh }) {
             <div className="control-panel">
                 <h3>Bot Controls</h3>
 
-                {/* NEW: Trade Amount Configuration */}
+                {/* NEW: Aggressive Trading Mode Selection */}
+                <div className="aggressive-mode-section">
+                    <h4>Trading Speed Mode</h4>
+
+                    <div className="mode-options">
+                        <label className="mode-option">
+                            <input
+                                type="radio"
+                                name="tradingMode"
+                                checked={!aggressiveMode && !superAggressiveMode}
+                                onChange={() => {
+                                    setAggressiveMode(false);
+                                    setSuperAggressiveMode(false);
+                                    localStorage.setItem('bot_aggressive_mode', 'false');
+                                    localStorage.setItem('bot_super_aggressive_mode', 'false');
+                                }}
+                            />
+                            <span className="mode-title">Conservative (Original)</span>
+                            <div className="mode-description">
+                                1-hour candles • 5-min cooldown • 3-8 trades/day • Safe & steady
+                            </div>
+                        </label>
+
+                        <label className="mode-option aggressive">
+                            <input
+                                type="radio"
+                                name="tradingMode"
+                                checked={aggressiveMode}
+                                onChange={(e) => handleAggressiveModeChange(e.target.checked)}
+                            />
+                            <span className="mode-title">⚡ Aggressive (Fast)</span>
+                            <div className="mode-description">
+                                5-min candles • 30-sec cooldown • 10-25 trades/day • Higher frequency
+                            </div>
+                        </label>
+
+                        <label className="mode-option super-aggressive">
+                            <input
+                                type="radio"
+                                name="tradingMode"
+                                checked={superAggressiveMode}
+                                onChange={(e) => handleSuperAggressiveModeChange(e.target.checked)}
+                            />
+                            <span className="mode-title">🚀 Super Aggressive (Maximum)</span>
+                            <div className="mode-description">
+                                5-min candles • 15-sec checks • 30-60 trades/day • Multiple pairs required
+                            </div>
+                        </label>
+                    </div>
+
+                    {(aggressiveMode || superAggressiveMode) && (
+                        <div className="aggressive-warning">
+                            <strong>⚠️ High-Frequency Trading Warning:</strong>
+                            <ul>
+                                <li>More trades = higher potential profits AND losses</li>
+                                <li>Increased trading fees due to frequency</li>
+                                <li>Requires active monitoring in live mode</li>
+                                <li>Start with paper trading to test performance</li>
+                            </ul>
+                        </div>
+                    )}
+                </div>
+
+                {/* Multi-Pair Mode (enhanced for super aggressive) */}
+                <div className="multi-pair-section">
+                    <label className="multi-pair-toggle">
+                        <input
+                            type="checkbox"
+                            checked={multiPairMode}
+                            onChange={(e) => handleMultiPairModeChange(e.target.checked)}
+                            disabled={superAggressiveMode} // Force enabled for super aggressive
+                            className="multi-pair-checkbox"
+                        />
+                        <span className="multi-pair-title">
+                            Multi-Pair Trading Mode {superAggressiveMode && "(Required)"}
+                        </span>
+                    </label>
+                    <p className="multi-pair-description">
+                        Trade multiple pairs simultaneously for more opportunities
+                        {superAggressiveMode && (
+                            <><br /><strong>🚀 Super Aggressive mode requires at least 3 pairs</strong></>
+                        )}
+                    </p>
+
+                    {(multiPairMode || superAggressiveMode) && (
+                        <div className="multi-pair-content">
+                            <div className="multi-pair-header">
+                                <span>Selected Trading Pairs</span>
+                                <span className="pair-counter">
+                                    {selectedPairs.length}/{superAggressiveMode ? '15' : '8'}
+                                    {superAggressiveMode && selectedPairs.length < 3 && (
+                                        <span className="error-text"> (Need 3+ for Super Aggressive)</span>
+                                    )}
+                                </span>
+                            </div>
+
+                            <div className="selected-pairs-container">
+                                {selectedPairs.map(pair => (
+                                    <div key={pair} className="pair-tag">
+                                        <span>{pair}</span>
+                                        {selectedPairs.length > 1 && (
+                                            <button
+                                                onClick={() => removePair(pair)}
+                                                className="pair-remove-btn"
+                                                title="Remove pair"
+                                            >
+                                                ×
+                                            </button>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+
+                            <div className="add-pairs-section">
+                                <h4 className="add-pairs-header">Add Popular Pairs:</h4>
+                                <div className="popular-pairs-grid">
+                                    {popularPairs
+                                        .filter(pair => !selectedPairs.includes(pair))
+                                        .map(pair => (
+                                            <button
+                                                key={pair}
+                                                onClick={() => addPair(pair)}
+                                                disabled={selectedPairs.length >= (superAggressiveMode ? 15 : 8)}
+                                                className="add-pair-btn"
+                                            >
+                                                + {pair}
+                                            </button>
+                                        ))
+                                    }
+                                </div>
+                            </div>
+
+                            <div className="multi-pair-benefits">
+                                <div className="benefits-title">Multi-Pair Benefits:</div>
+                                <ul className="benefits-list">
+                                    <li>
+                                        Risk split: {Math.max((settings.risk / selectedPairs.length), 0.3).toFixed(2)}% per pair
+                                        {superAggressiveMode && " (minimum 0.3%)"}
+                                    </li>
+                                    <li>
+                                        Expected trades: {superAggressiveMode ? '30-60' : (aggressiveMode ? '15-35' : '10-25')}/day
+                                    </li>
+                                    <li>Diversification reduces single-pair risk</li>
+                                    <li>Up to 2 positions per pair simultaneously</li>
+                                    {superAggressiveMode && <li>🚀 Maximum frequency: 15-second market checks</li>}
+                                </ul>
+                            </div>
+                        </div>
+                    )}
+                </div>
+
+                {/* Trade Amount Configuration */}
                 <div className="trade-config-section">
                     <div className="form-group">
                         <label>Trade Amount ($)</label>
@@ -308,17 +631,50 @@ function BotControls({ settings, botStatus, onRefresh }) {
                             onChange={(e) => handleTradeAmountChange(e.target.value)}
                             placeholder="Enter trade amount in USD"
                         />
-                        <small className="form-hint">Amount of capital per trade (recommended: $500-$2000)</small>
+                        <small className="form-hint">
+                            Amount per trade (recommended: ${superAggressiveMode ? '300-1000' : (aggressiveMode ? '500-2000' : '1000-5000')})
+                        </small>
                     </div>
                 </div>
 
+                {/* Enhanced Status Display */}
                 <div className="bot-status-display">
-                    <div className={`status-indicator-large ${botStatus.running ? 'active' : 'inactive'}`}>
+                    <div className={`status-indicator-large ${botStatus.running ? 'active' : 'inactive'} ${superAggressiveMode ? 'super-aggressive' : (aggressiveMode ? 'aggressive' : '')}`}>
                         <div className="status-pulse"></div>
                         <div className="status-text">
-                            {botStatus.running ? 'TRADING ENGINE ACTIVE' : 'SYSTEM STANDBY'}
+                            {botStatus.running ?
+                                (superAggressiveMode ? 'SUPER AGGRESSIVE ENGINE ACTIVE' :
+                                    aggressiveMode ? 'AGGRESSIVE ENGINE ACTIVE' :
+                                        'TRADING ENGINE ACTIVE')
+                                : 'SYSTEM STANDBY'}
                         </div>
                     </div>
+
+                    {/* Performance stats for aggressive modes */}
+                    {botStatus.running && (aggressiveMode || superAggressiveMode) && (
+                        <div className="performance-stats">
+                            <div className="stats-row">
+                                <span>Total P&L: </span>
+                                <span className={performanceStats.total_pnl >= 0 ? 'profit' : 'loss'}>
+                                    ${performanceStats.total_pnl?.toFixed(2)}
+                                </span>
+                            </div>
+                            <div className="stats-row">
+                                <span>Win Rate: </span>
+                                <span>{performanceStats.win_rate?.toFixed(1)}% ({performanceStats.win_count}W/{performanceStats.loss_count}L)</span>
+                            </div>
+                            <div className="stats-row">
+                                <span>Open Positions: </span>
+                                <span>{performanceStats.open_positions}</span>
+                            </div>
+                            {performanceStats.consecutive_losses > 0 && (
+                                <div className="stats-row warning">
+                                    <span>Loss Streak: </span>
+                                    <span>{performanceStats.consecutive_losses}</span>
+                                </div>
+                            )}
+                        </div>
+                    )}
 
                     <div className="activity-monitor">
                         <div className="activity-label">Current Activity:</div>
@@ -328,14 +684,24 @@ function BotControls({ settings, botStatus, onRefresh }) {
 
                 <div className="control-buttons">
                     <button
-                        className={`btn btn-success ${botStatus.running ? 'disabled' : ''}`}
+                        className={`btn btn-success ${botStatus.running ? 'disabled' : ''} ${superAggressiveMode ? 'super-aggressive-btn' : (aggressiveMode ? 'aggressive-btn' : '')}`}
                         onClick={startBot}
                         disabled={loading || botStatus.running}
+                        style={{
+                            backgroundColor: superAggressiveMode ? '#ff4444' : (aggressiveMode ? '#ff8800' : '#28a745'),
+                            color: 'white',
+                            border: 'none',
+                            padding: '12px 24px',
+                            borderRadius: '6px',
+                            cursor: loading || botStatus.running ? 'not-allowed' : 'pointer',
+                            fontSize: '14px',
+                            fontWeight: 'bold'
+                        }}
                     >
                         {loading && !botStatus.running ? (
                             <><span className="btn-spinner"></span>STARTING...</>
                         ) : (
-                            <>START ENGINE</>
+                            <>START {superAggressiveMode ? 'SUPER AGGRESSIVE' : (aggressiveMode ? 'AGGRESSIVE' : '')} ENGINE</>
                         )}
                     </button>
 
@@ -343,6 +709,16 @@ function BotControls({ settings, botStatus, onRefresh }) {
                         className={`btn btn-danger ${!botStatus.running ? 'disabled' : ''}`}
                         onClick={stopBot}
                         disabled={loading || !botStatus.running}
+                        style={{
+                            backgroundColor: '#dc3545',
+                            color: 'white',
+                            border: 'none',
+                            padding: '12px 24px',
+                            borderRadius: '6px',
+                            cursor: loading || !botStatus.running ? 'not-allowed' : 'pointer',
+                            fontSize: '14px',
+                            fontWeight: 'bold'
+                        }}
                     >
                         {loading && botStatus.running ? (
                             <><span className="btn-spinner"></span>STOPPING...</>
@@ -364,18 +740,70 @@ function BotControls({ settings, botStatus, onRefresh }) {
                     </button>
                 </div>
 
+                {/* Mode-specific recommendations */}
+                <div className="recommended-settings">
+                    <div className="settings-title">
+                        {superAggressiveMode ? 'Super Aggressive Mode Settings' :
+                            aggressiveMode ? 'Aggressive Mode Settings' :
+                                'Recommended Settings'}
+                    </div>
+                    <div className="settings-grid">
+                        <div className="setting-item">
+                            <span className="setting-label">Stop Loss:</span>
+                            <span className="setting-value">
+                                {(aggressiveMode || superAggressiveMode) ? '1.5-2.5%' : '2-4%'}
+                                (current: {settings.stop_loss}%)
+                            </span>
+                        </div>
+                        <div className="setting-item">
+                            <span className="setting-label">Take Profit:</span>
+                            <span className="setting-value">
+                                {(aggressiveMode || superAggressiveMode) ? '2-4%' : '4-8%'}
+                                (current: {settings.take_profit}%)
+                            </span>
+                        </div>
+                        <div className="setting-item">
+                            <span className="setting-label">Expected Frequency:</span>
+                            <span className="setting-value">
+                                {superAggressiveMode ? '30-60 trades/day' :
+                                    aggressiveMode ? '10-25 trades/day' : '3-8 trades/day'}
+                            </span>
+                        </div>
+                    </div>
+                    {(aggressiveMode || superAggressiveMode) && (
+                        <div className="settings-warning">
+                            {superAggressiveMode ?
+                                'Super Aggressive mode uses 15-second market checks for maximum opportunity capture.' :
+                                'Aggressive mode uses 5-minute candles and 30-second cooldowns for faster execution.'}
+                        </div>
+                    )}
+                </div>
+
                 {message && (
-                    <div className={`message ${message.includes('Error') ? 'error' : 'success'}`}>
+                    <div className={`message ${message.includes('Error') ? 'error' : 'success'} ${superAggressiveMode ? 'super-aggressive-message' : (aggressiveMode ? 'aggressive-message' : '')}`} style={{
+                        marginTop: '15px',
+                        padding: '12px',
+                        borderRadius: '6px',
+                        backgroundColor: message.includes('Error') ? '#f8d7da' : '#d4edda',
+                        color: message.includes('Error') ? '#721c24' : '#155724',
+                        border: `1px solid ${message.includes('Error') ? '#f5c6cb' : '#c3e6cb'}`,
+                        whiteSpace: 'pre-line',
+                        fontSize: '13px'
+                    }}>
                         {message}
                     </div>
                 )}
             </div>
 
-            {/* Live Strategy Visualization */}
+            {/* Live Strategy Visualization (enhanced for aggressive modes) */}
             <div className="strategy-visualization">
-                <h3>Live Strategy Execution</h3>
+                <h3>
+                    Live Strategy Execution
+                    {superAggressiveMode && ' (Super Aggressive)'}
+                    {aggressiveMode && ' (Aggressive)'}
+                </h3>
 
-                {/* NEW: Live Statistics Panel */}
+                {/* Enhanced Live Statistics Panel */}
                 <div className="live-stats-panel">
                     <div className="stats-grid">
                         <div className="stat-item">
@@ -400,7 +828,14 @@ function BotControls({ settings, botStatus, onRefresh }) {
                             <span className="stat-label">Avg Loss</span>
                             <span className="stat-value loss">${liveStats.avgLoss.toFixed(2)}</span>
                         </div>
-
+                        {(aggressiveMode || superAggressiveMode) && performanceStats.total_pnl !== undefined && (
+                            <div className="stat-item">
+                                <span className="stat-label">Session P&L</span>
+                                <span className={`stat-value ${performanceStats.total_pnl >= 0 ? 'profit' : 'loss'}`}>
+                                    ${performanceStats.total_pnl.toFixed(2)}
+                                </span>
+                            </div>
+                        )}
                     </div>
                 </div>
 
@@ -409,21 +844,36 @@ function BotControls({ settings, botStatus, onRefresh }) {
                         <div className="strategy-item">
                             <span className="strategy-label">Strategy:</span>
                             <span className="strategy-value">
-                                {settings.strategy_type === 'custom' ? 'Custom Strategy' : 'Moving Average Crossover'}
+                                {(aggressiveMode || superAggressiveMode) ? 'Aggressive EMA Crossover' :
+                                    settings.strategy_type === 'custom' ? 'Custom Strategy' : 'Moving Average Crossover'}
                             </span>
                         </div>
                         <div className="strategy-item">
-                            <span className="strategy-label">Fast MA:</span>
-                            <span className="strategy-value">9 periods</span>
+                            <span className="strategy-label">Timeframe:</span>
+                            <span className="strategy-value">
+                                {(aggressiveMode || superAggressiveMode) ? '5-minute candles' : '1-hour candles'}
+                            </span>
                         </div>
                         <div className="strategy-item">
-                            <span className="strategy-label">Slow MA:</span>
-                            <span className="strategy-value">21 periods</span>
+                            <span className="strategy-label">Check Frequency:</span>
+                            <span className="strategy-value">
+                                {superAggressiveMode ? 'Every 15 seconds' :
+                                    aggressiveMode ? 'Every 5 seconds' : 'Every 10 seconds'}
+                            </span>
                         </div>
                         <div className="strategy-item">
-                            <span className="strategy-label">Frequency:</span>
-                            <span className="strategy-value">45-60 seconds</span>
+                            <span className="strategy-label">Cooldown:</span>
+                            <span className="strategy-value">
+                                {superAggressiveMode ? '30 seconds per pair' :
+                                    aggressiveMode ? '30 seconds' : '5 minutes'}
+                            </span>
                         </div>
+                        {(multiPairMode || superAggressiveMode) && (
+                            <div className="strategy-item">
+                                <span className="strategy-label">Pairs:</span>
+                                <span className="strategy-value">{selectedPairs.length} symbols</span>
+                            </div>
+                        )}
                     </div>
                 </div>
 
@@ -440,12 +890,11 @@ function BotControls({ settings, botStatus, onRefresh }) {
                             <YAxis
                                 stroke="var(--text-muted)"
                                 tick={{ fontSize: 10 }}
-                                tickFormatter={(value) => `$${value.toFixed(0)}`}
+                                tickFormatter={(value) => `${value.toFixed(0)}`}
                                 domain={['dataMin - 50', 'dataMax + 50']}
                             />
                             <Tooltip content={<CustomStrategyTooltip />} />
 
-                            {/* Price Line */}
                             <Line
                                 type="monotone"
                                 dataKey="price"
@@ -455,7 +904,6 @@ function BotControls({ settings, botStatus, onRefresh }) {
                                 name="Price"
                             />
 
-                            {/* Fast Moving Average */}
                             <Line
                                 type="monotone"
                                 dataKey="fastMA"
@@ -466,7 +914,6 @@ function BotControls({ settings, botStatus, onRefresh }) {
                                 name="Fast MA (9)"
                             />
 
-                            {/* Slow Moving Average */}
                             <Line
                                 type="monotone"
                                 dataKey="slowMA"
@@ -477,7 +924,6 @@ function BotControls({ settings, botStatus, onRefresh }) {
                                 name="Slow MA (21)"
                             />
 
-                            {/* Trade Entry/Exit Markers */}
                             {tradeMarkers.map((marker, index) => (
                                 <ReferenceDot
                                     key={index}
@@ -496,7 +942,7 @@ function BotControls({ settings, botStatus, onRefresh }) {
                 <div className="strategy-legend">
                     <div className="legend-item">
                         <span className="legend-line price-line"></span>
-                        <span>{settings.symbol ? settings.symbol.split('/')[0] : 'Crypto'} Price</span>
+                        <span>{(multiPairMode ? selectedPairs[0] : settings.symbol)?.split('/')[0] || 'Crypto'} Price</span>
                     </div>
                     <div className="legend-item">
                         <span className="legend-line fast-ma-line"></span>
@@ -517,6 +963,7 @@ function BotControls({ settings, botStatus, onRefresh }) {
                 </div>
             </div>
 
+            {/* Enhanced Configuration Display */}
             <div className="trading-config">
                 <h3>Current Configuration</h3>
                 <div className="config-grid">
@@ -525,22 +972,34 @@ function BotControls({ settings, botStatus, onRefresh }) {
                         <span className="config-value">{settings.exchange?.toUpperCase() || 'NOT SET'}</span>
                     </div>
                     <div className="config-item">
-                        <span className="config-label">Trading Pair</span>
-                        <span className="config-value">{settings.symbol || 'NOT SET'}</span>
+                        <span className="config-label">Trading Pair{multiPairMode ? 's' : ''}</span>
+                        <span className="config-value">
+                            {multiPairMode ? selectedPairs.join(', ') : (settings.symbol || 'NOT SET')}
+                        </span>
                     </div>
                     <div className="config-item">
                         <span className="config-label">Trade Amount</span>
                         <span className="config-value">${tradeAmount}</span>
                     </div>
                     <div className="config-item">
+                        <span className="config-label">Speed Mode</span>
+                        <span className="config-value">
+                            {superAggressiveMode ? 'Super Aggressive (Maximum)' :
+                                aggressiveMode ? 'Aggressive (Fast)' : 'Conservative (Original)'}
+                        </span>
+                    </div>
+                    <div className="config-item">
                         <span className="config-label">Strategy Type</span>
                         <span className="config-value">
-                            {settings.strategy_type === 'custom' ? 'Custom Strategy' : 'Default MA Crossover'}
+                            {(aggressiveMode || superAggressiveMode) ? 'Aggressive EMA Crossover' :
+                                settings.strategy_type === 'custom' ? 'Custom Strategy' : 'Default MA Crossover'}
                         </span>
                     </div>
                     <div className="config-item">
                         <span className="config-label">Risk per Trade</span>
-                        <span className="config-value">{settings.risk}%</span>
+                        <span className="config-value">
+                            {multiPairMode ? `${Math.max((settings.risk / selectedPairs.length), 0.3).toFixed(2)}% per pair` : `${settings.risk}%`}
+                        </span>
                     </div>
                     <div className="config-item">
                         <span className="config-label">Stop Loss</span>
@@ -549,6 +1008,20 @@ function BotControls({ settings, botStatus, onRefresh }) {
                     <div className="config-item">
                         <span className="config-label">Take Profit</span>
                         <span className="config-value">{settings.take_profit}%</span>
+                    </div>
+                    <div className="config-item">
+                        <span className="config-label">Execution Speed</span>
+                        <span className="config-value">
+                            {superAggressiveMode ? 'Maximum (15s checks)' :
+                                aggressiveMode ? 'Fast (5s checks)' : 'Normal (10s checks)'}
+                        </span>
+                    </div>
+                    <div className="config-item">
+                        <span className="config-label">Expected Trades/Day</span>
+                        <span className="config-value">
+                            {superAggressiveMode ? '30-60' :
+                                aggressiveMode ? '10-25' : '3-8'}
+                        </span>
                     </div>
                     <div className="config-item">
                         <span className="config-label">Mode</span>

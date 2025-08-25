@@ -4,14 +4,12 @@ import axios from 'axios';
 function Settings({ settings, setSettings }) {
     const [saveMessage, setSaveMessage] = useState('');
     const [loading, setLoading] = useState(false);
-    const [symbolInput, setSymbolInput] = useState(''); // Local state for symbol input
+    const [symbolInput, setSymbolInput] = useState('');
 
-    // Initialize local symbol input from settings
     useEffect(() => {
         setSymbolInput(settings.symbol || '');
     }, [settings.symbol]);
 
-    // Load saved configuration on component mount
     useEffect(() => {
         const loadConfig = async () => {
             try {
@@ -36,10 +34,9 @@ function Settings({ settings, setSettings }) {
         }));
     };
 
-    // Special handler for symbol that updates both local state and settings
     const handleSymbolChange = (value) => {
-        setSymbolInput(value); // Update local state immediately
-        handleChange('symbol', value); // Update settings
+        setSymbolInput(value);
+        handleChange('symbol', value);
     };
 
     const testConnection = async () => {
@@ -56,10 +53,10 @@ function Settings({ settings, setSettings }) {
             });
 
             if (response.data.success) {
-                alert(`✅ Connection Success!\nYour USDT Balance: ${response.data.your_usdt_balance}\nBTC Price: ${response.data.current_btc_price}`);
+                alert(`Connection Success!\nYour USDT Balance: ${response.data.your_usdt_balance}\nBTC Price: ${response.data.current_btc_price}`);
             }
         } catch (error) {
-            alert(`❌ Connection Failed: ${error.response?.data?.error || error.message}`);
+            alert(`Connection Failed: ${error.response?.data?.error || error.message}`);
         }
     };
 
@@ -73,7 +70,7 @@ function Settings({ settings, setSettings }) {
                 risk: settings.risk !== undefined ? settings.risk : 1.0,
                 stop_loss: settings.stop_loss !== undefined ? settings.stop_loss : 1.0,
                 take_profit: settings.take_profit !== undefined ? settings.take_profit : 2.0,
-                symbol: symbolInput || settings.symbol, // Use local symbol input
+                symbol: symbolInput || settings.symbol,
                 trading_mode: settings.trading_mode || 'spot',
                 leverage: settings.leverage !== undefined ? settings.leverage : 1,
                 kill_switch_threshold: settings.kill_switch_threshold !== undefined ? settings.kill_switch_threshold : 10
@@ -95,7 +92,6 @@ function Settings({ settings, setSettings }) {
             <h3>Bot Configuration</h3>
             <div className="settings-form">
 
-                {/* Existing API Configuration */}
                 <div className="form-group">
                     <label>API Key</label>
                     <input
@@ -127,7 +123,7 @@ function Settings({ settings, setSettings }) {
                             fontSize: '14px'
                         }}
                     >
-                        🧪 Test API Connection
+                        Test API Connection
                     </button>
                 </div>
 
@@ -159,7 +155,6 @@ function Settings({ settings, setSettings }) {
                     </small>
                 </div>
 
-                {/* NEW: Trading Mode Selection */}
                 <div className="form-group">
                     <label>Trading Mode</label>
                     <select
@@ -171,7 +166,6 @@ function Settings({ settings, setSettings }) {
                     </select>
                 </div>
 
-                {/* NEW: Leverage setting (only show for futures) */}
                 {settings.trading_mode === 'futures' && (
                     <div className="form-group">
                         <label>Leverage (1x - 10x)</label>
@@ -183,12 +177,11 @@ function Settings({ settings, setSettings }) {
                             onChange={(e) => handleChange('leverage', parseInt(e.target.value))}
                         />
                         <small style={{ color: '#888', fontSize: '12px' }}>
-                            ⚠️ Higher leverage = Higher risk of liquidation
+                            Higher leverage = Higher risk of liquidation
                         </small>
                     </div>
                 )}
 
-                {/* NEW: Futures trading warning */}
                 {settings.trading_mode === 'futures' && (
                     <div style={{
                         background: '#130f02ff',
@@ -197,7 +190,7 @@ function Settings({ settings, setSettings }) {
                         margin: '10px 0',
                         border: '1px solid #a70000ff'
                     }}>
-                        <strong>⚠️ Futures Trading Warning:</strong>
+                        <strong>Futures Trading Warning:</strong>
                         <ul style={{ margin: '8px 0', paddingLeft: '20px', fontSize: '13px' }}>
                             <li>Leverage amplifies both profits AND losses</li>
                             <li>Funding fees are charged every 8 hours</li>
@@ -214,21 +207,49 @@ function Settings({ settings, setSettings }) {
                             checked={settings.real_mode || false}
                             onChange={(e) => handleChange('real_mode', e.target.checked)}
                         />
-                        Real Trading Mode (⚠️ Use real money)
+                        Real Trading Mode (Use real money)
                     </label>
                 </div>
 
-                {/* Existing Strategy Configuration */}
+                {/* UPDATED: Enhanced Strategy Configuration */}
                 <div className="form-group">
                     <label>Strategy Type</label>
                     <select
                         value={settings.strategy_type || 'default_ma'}
                         onChange={(e) => handleChange('strategy_type', e.target.value)}
                     >
-                        <option value="default_ma">Default MA Crossover</option>
+                        <option value="default_ma">Default MA Crossover (Conservative)</option>
+                        <option value="aggressive_ema">Aggressive EMA Crossover (Fast)</option>
+                        <option value="breakout">Momentum Breakout (Aggressive)</option>
                         <option value="custom">Custom Strategy</option>
                     </select>
+                    <small style={{ color: '#888', fontSize: '12px', display: 'block', marginTop: '4px' }}>
+                        {settings.strategy_type === 'aggressive_ema' && 'Fast EMAs (5/13) with lower confirmation requirements'}
+                        {settings.strategy_type === 'breakout' && 'Trades price breakouts above/below recent highs/lows'}
+                        {settings.strategy_type === 'default_ma' && 'Conservative MA crossover with multiple confirmations'}
+                        {settings.strategy_type === 'custom' && 'Uses the same logic as Default MA but can be customized'}
+                    </small>
                 </div>
+
+                {/* Strategy-specific recommendations */}
+                {(settings.strategy_type === 'aggressive_ema' || settings.strategy_type === 'breakout') && (
+                    <div style={{
+                        background: '#1a2332',
+                        padding: '12px',
+                        borderRadius: '6px',
+                        margin: '10px 0',
+                        border: '1px solid #3498db'
+                    }}>
+                        <strong>Aggressive Strategy Recommendations:</strong>
+                        <ul style={{ margin: '8px 0', paddingLeft: '20px', fontSize: '13px' }}>
+                            <li>Lower stop loss: 1.5-2.5% (vs 2-4% for conservative)</li>
+                            <li>Lower take profit: 2-4% (vs 4-8% for conservative)</li>
+                            <li>Higher trade frequency: 10-30 trades/day vs 3-8</li>
+                            <li>Works best with 5-minute candles and multi-pair mode</li>
+                            <li>Start with paper trading to test performance</li>
+                        </ul>
+                    </div>
+                )}
 
                 <div className="form-group">
                     <label>Risk per Trade (%)</label>
@@ -240,6 +261,10 @@ function Settings({ settings, setSettings }) {
                         value={settings.risk !== undefined ? settings.risk : 1.0}
                         onChange={(e) => handleChange('risk', parseFloat(e.target.value))}
                     />
+                    <small style={{ color: '#888', fontSize: '12px', display: 'block', marginTop: '4px' }}>
+                        {(settings.strategy_type === 'aggressive_ema' || settings.strategy_type === 'breakout') ?
+                            'Recommended: 1.5-3% for aggressive strategies' : 'Recommended: 0.5-2% for conservative'}
+                    </small>
                 </div>
 
                 <div className="form-group">
@@ -247,11 +272,15 @@ function Settings({ settings, setSettings }) {
                     <input
                         type="number"
                         step="0.1"
-                        min="0.1"
+                        min="0.5"
                         max="10"
                         value={settings.stop_loss !== undefined ? settings.stop_loss : 1.0}
                         onChange={(e) => handleChange('stop_loss', parseFloat(e.target.value))}
                     />
+                    <small style={{ color: '#888', fontSize: '12px', display: 'block', marginTop: '4px' }}>
+                        {(settings.strategy_type === 'aggressive_ema' || settings.strategy_type === 'breakout') ?
+                            'Aggressive: 1.5-2.5% (tighter stops for faster exits)' : 'Conservative: 2-4%'}
+                    </small>
                 </div>
 
                 <div className="form-group">
@@ -259,29 +288,32 @@ function Settings({ settings, setSettings }) {
                     <input
                         type="number"
                         step="0.1"
-                        min="0.1"
+                        min="0.5"
                         max="20"
                         value={settings.take_profit !== undefined ? settings.take_profit : 2.0}
                         onChange={(e) => handleChange('take_profit', parseFloat(e.target.value))}
                     />
+                    <small style={{ color: '#888', fontSize: '12px', display: 'block', marginTop: '4px' }}>
+                        {(settings.strategy_type === 'aggressive_ema' || settings.strategy_type === 'breakout') ?
+                            'Aggressive: 2-4% (smaller profits, higher frequency)' : 'Conservative: 4-8%'}
+                    </small>
                 </div>
 
-                {/* NEW: Kill Switch Configuration */}
                 <div className="form-group">
                     <label>Kill Switch (Consecutive Losses)</label>
                     <input
                         type="number"
                         min="5"
-                        max="20"
+                        max="25"
                         value={settings.kill_switch_threshold !== undefined ? settings.kill_switch_threshold : 10}
                         onChange={(e) => handleChange('kill_switch_threshold', parseInt(e.target.value))}
                     />
                     <small style={{ color: '#888', fontSize: '12px', display: 'block', marginTop: '4px' }}>
-                        Bot will auto-stop after this many consecutive losses (5-20)
+                        {(settings.strategy_type === 'aggressive_ema' || settings.strategy_type === 'breakout') ?
+                            'Aggressive: 15-25 (allow more losses due to higher frequency)' : 'Conservative: 8-15'}
                     </small>
                 </div>
 
-                {/* NEW: Kill Switch Info Box */}
                 <div style={{
                     background: '#000000ff',
                     padding: '12px',
@@ -289,11 +321,11 @@ function Settings({ settings, setSettings }) {
                     margin: '10px 0',
                     border: '1px solid #16213e'
                 }}>
-                    <strong>🛡️ Kill Switch Protection:</strong>
+                    <strong>Kill Switch Protection:</strong>
                     <ul style={{ margin: '8px 0', paddingLeft: '20px', fontSize: '13px' }}>
                         <li>Automatically stops bot after consecutive losses</li>
                         <li>Protects against black swan events</li>
-                        <li>Based on data : longest streak was 6 losses</li>
+                        <li>Aggressive strategies may need higher thresholds</li>
                         <li>Manual reset required to resume trading</li>
                     </ul>
                 </div>
@@ -312,7 +344,6 @@ function Settings({ settings, setSettings }) {
                     </div>
                 )}
 
-                {/* Save Configuration Button */}
                 <div className="form-group">
                     <button
                         onClick={saveConfiguration}

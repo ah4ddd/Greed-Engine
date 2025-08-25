@@ -1,9 +1,9 @@
 {
   "strategy_type": "custom",
-  "risk": 0.3,
-  "stop_loss": 0.3,
-  "take_profit": 1.1,
-  "symbol": "SHIB/USDT",
+  "risk": 1,
+  "stop_loss": 1,
+  "take_profit": 3,
+  "symbol": "BTC/USDT",
   "trading_mode": "spot",
   "leverage": 1,
   "kill_switch_threshold": 5

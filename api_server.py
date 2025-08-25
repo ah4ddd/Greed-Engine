@@ -1,7 +1,8 @@
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 from backend.exchange import TradingInterface
-from backend.bot_core import TradingBot
+from backend.bot_core import TradingBot, MultiPairTradingBot, HighFrequencyTradingBot, SuperAggressiveMultiPairBot
+import os
 from backend.db import (init_all_databases, get_account_balance, get_trade_history,
 save_settings, log_trade, set_trading_mode, get_trading_mode,
 migrate_existing_database)
@@ -65,6 +66,65 @@ def get_balance():
 def get_trades():
     trades = get_trade_history()
     return jsonify(trades)
+
+# NEW: Bot Performance Endpoint (FIXED)
+@app.route('/api/bot-performance', methods=['GET'])
+def get_bot_performance():
+    """Get current bot performance statistics for aggressive modes"""
+    global current_bot
+
+    try:
+        if not current_bot:
+            return jsonify({
+                'total_pnl': 0.0,
+                'total_trades': 0,
+                'win_count': 0,
+                'loss_count': 0,
+                'win_rate': 0.0,
+                'consecutive_losses': 0,
+                'open_positions': 0
+            })
+
+        # Get recent trades for performance calculation
+        trades = get_trade_history()
+
+        # Calculate performance stats
+        total_pnl = sum(trade.get('pnl', 0) for trade in trades)
+        total_trades = len(trades)
+        winning_trades = [t for t in trades if t.get('pnl', 0) > 0]
+        losing_trades = [t for t in trades if t.get('pnl', 0) < 0]
+
+        win_count = len(winning_trades)
+        loss_count = len(losing_trades)
+        win_rate = (win_count / total_trades * 100) if total_trades > 0 else 0.0
+
+        # Get consecutive losses from bot if available
+        consecutive_losses = getattr(current_bot, 'consecutive_losses', 0)
+
+        # Estimate open positions (this would need to be tracked in your bot)
+        open_positions = getattr(current_bot, 'active_positions', 0) if hasattr(current_bot, 'active_positions') else 0
+
+        return jsonify({
+            'total_pnl': round(total_pnl, 2),
+            'total_trades': total_trades,
+            'win_count': win_count,
+            'loss_count': loss_count,
+            'win_rate': round(win_rate, 1),
+            'consecutive_losses': consecutive_losses,
+            'open_positions': open_positions
+        })
+
+    except Exception as e:
+        print(f"Error fetching bot performance: {e}")
+        return jsonify({
+            'total_pnl': 0.0,
+            'total_trades': 0,
+            'win_count': 0,
+            'loss_count': 0,
+            'win_rate': 0.0,
+            'consecutive_losses': 0,
+            'open_positions': 0
+        })
 
 # NEW: Trading Mode Management
 @app.route('/api/trading-mode', methods=['GET'])
@@ -199,6 +259,203 @@ def get_ohlcv():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+# NEW AGGRESSIVE TRADING ENDPOINTS ADDED BELOW
+
+@app.route('/api/ohlcv-fast', methods=['GET'])
+def get_fast_ohlcv():
+    """Get 5-minute candlestick data for fast trading"""
+    symbol = request.args.get('symbol')
+    if not symbol:
+        return jsonify({'error': 'Symbol parameter is required'}), 400
+
+    limit = int(request.args.get('limit', 200))  # More data for analysis
+    trading_mode = request.args.get('trading_mode', 'spot')
+
+    try:
+        temp_interface = TradingInterface('', '', 'binance', False, trading_mode)
+        # Use 5-minute timeframe for faster signals
+        df = temp_interface.fetch_ohlcv(symbol, '5m', limit)
+
+        ohlcv_data = []
+        for _, row in df.iterrows():
+            ohlcv_data.append({
+                'timestamp': int(row['timestamp'].timestamp() * 1000),
+                'open': float(row['open']),
+                'high': float(row['high']),
+                'low': float(row['low']),
+                'close': float(row['close']),
+                'volume': float(row['volume'])
+            })
+
+        return jsonify({
+            'symbol': symbol,
+            'timeframe': '5m',
+            'data': ohlcv_data,
+            'message': f'Fast trading data for {symbol} (5-min candles)'
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/start-fast', methods=['POST'])
+def start_fast_bot():
+    """Start the aggressive high-frequency trading bot"""
+    global bot_running, bot_thread, current_bot, current_interface
+
+    data = request.get_json()
+    api_key = data.get('api_key', '')
+    api_secret = data.get('api_secret', '')
+    exchange = data.get('exchange', 'binance')
+    symbol = data.get('symbol')
+    if not symbol:
+        return jsonify({"error": "Trading pair (symbol) is required"}), 400
+
+    real_mode = data.get('real_mode', False)
+    risk = float(data.get('risk', 2.0))  # Default higher risk
+    stop_loss = float(data.get('stop_loss', 1.5))  # Minimum 1.5%
+    take_profit = float(data.get('take_profit', 2.5))  # Minimum 2.5%
+    strategy_type = data.get('strategy_type', 'aggressive_ema')
+    trade_amount = data.get('trade_amount')
+
+    trading_mode = data.get('trading_mode', 'spot')
+    leverage = int(data.get('leverage', 1))
+    kill_switch_threshold = int(data.get('kill_switch_threshold', 15))  # More lenient
+
+    db_mode = 'live' if real_mode else 'paper'
+    set_trading_mode(db_mode)
+
+    if bot_running:
+        return jsonify({"error": "Bot is already running"}), 400
+
+    try:
+        current_interface = TradingInterface(
+            api_key, api_secret, exchange, real_mode, trading_mode, leverage
+        )
+
+        # Use the new high-frequency bot
+        current_bot = HighFrequencyTradingBot(
+            current_interface,
+            symbol,
+            risk,
+            stop_loss,
+            take_profit,
+            strategy_type=strategy_type,
+            trade_amount=trade_amount,
+            kill_switch_threshold=kill_switch_threshold
+        )
+
+        def run_fast_bot():
+            global bot_running
+            while bot_running:
+                try:
+                    current_bot.run_once()
+
+                    if current_bot.is_kill_switch_active():
+                        print("Kill switch triggered - stopping fast bot")
+                        bot_running = False
+                        break
+
+                    # Much faster execution - check every 5 seconds
+                    time.sleep(5)
+
+                except Exception as e:
+                    print(f"Fast bot error: {e}")
+                    time.sleep(5)
+
+        bot_running = True
+        bot_thread = threading.Thread(target=run_fast_bot)
+        bot_thread.daemon = True
+        bot_thread.start()
+
+        strategy_name = "AGGRESSIVE EMA" if strategy_type == "aggressive_ema" else "BREAKOUT"
+
+        return jsonify({
+            "message": f"FAST BOT started! Trading {symbol} with {strategy_name} strategy | Risk: {risk}% | 5-min candles | 30s cooldown"
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/start-super-aggressive', methods=['POST'])
+def start_super_aggressive_bot():
+    """Start the super aggressive multi-pair trading bot"""
+    global bot_running, bot_thread, current_bot, current_interface
+
+    data = request.get_json()
+    api_key = data.get('api_key', '')
+    api_secret = data.get('api_secret', '')
+    exchange = data.get('exchange', 'binance')
+
+    # Multi-pair configuration
+    symbols = data.get('symbols', [])
+    if not symbols or len(symbols) == 0:
+        return jsonify({"error": "At least one trading pair is required"}), 400
+
+    real_mode = data.get('real_mode', False)
+    risk = float(data.get('risk', 3.0))  # Higher total risk
+    stop_loss = float(data.get('stop_loss', 1.5))
+    take_profit = float(data.get('take_profit', 2.5))
+    strategy_type = data.get('strategy_type', 'aggressive_ema')
+    trade_amount = data.get('trade_amount')
+
+    trading_mode = data.get('trading_mode', 'spot')
+    leverage = int(data.get('leverage', 1))
+    kill_switch_threshold = int(data.get('kill_switch_threshold', 20))  # Very lenient
+
+    db_mode = 'live' if real_mode else 'paper'
+    set_trading_mode(db_mode)
+
+    if bot_running:
+        return jsonify({"error": "Bot is already running"}), 400
+
+    try:
+        current_interface = TradingInterface(
+            api_key, api_secret, exchange, real_mode, trading_mode, leverage
+        )
+
+        # Use the super aggressive multi-pair bot
+        current_bot = SuperAggressiveMultiPairBot(
+            current_interface,
+            symbols,
+            risk,
+            stop_loss,
+            take_profit,
+            strategy_type=strategy_type,
+            trade_amount=trade_amount,
+            kill_switch_threshold=kill_switch_threshold
+        )
+
+        def run_super_aggressive_bot():
+            global bot_running
+            while bot_running:
+                try:
+                    current_bot.run_once()
+
+                    if current_bot.is_kill_switch_active():
+                        print("Kill switch triggered - stopping super aggressive bot")
+                        bot_running = False
+                        break
+
+                    # MAXIMUM FREQUENCY - check every 15 seconds
+                    time.sleep(15)
+
+                except Exception as e:
+                    print(f"Super aggressive bot error: {e}")
+                    time.sleep(15)
+
+        bot_running = True
+        bot_thread = threading.Thread(target=run_super_aggressive_bot)
+        bot_thread.daemon = True
+        bot_thread.start()
+
+        strategy_name = "AGGRESSIVE EMA" if strategy_type == "aggressive_ema" else "BREAKOUT"
+
+        return jsonify({
+            "message": f"SUPER AGGRESSIVE BOT started! Trading {len(symbols)} pairs: {', '.join(symbols[:5])}{'...' if len(symbols) > 5 else ''} | Strategy: {strategy_name} | Total Risk: {risk}% | 5-min candles | 15s checks | 30s cooldown per pair"
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/current-price', methods=['GET'])
 def get_current_price():
     """Get current price for a symbol"""
@@ -231,7 +488,6 @@ def start_bot():
     api_key = data.get('api_key', '')
     api_secret = data.get('api_secret', '')
     exchange = data.get('exchange', 'binance')
-    # FIXED: No default fallback - require symbol to be provided
     symbol = data.get('symbol')
     if not symbol:
         return jsonify({"error": "Trading pair (symbol) is required"}), 400
@@ -241,16 +497,16 @@ def start_bot():
     stop_loss = float(data.get('stop_loss', 1.0))
     take_profit = float(data.get('take_profit', 2.0))
     strategy_type = data.get('strategy_type', 'default_ma')
-    trade_amount = data.get('trade_amount')  # Can be None
+    trade_amount = data.get('trade_amount')
 
-    # NEW: Get trading mode and leverage
+    # NEW: Multi-pair mode detection
+    multi_pair_mode = data.get('multi_pair_mode', False)
+    symbols = data.get('symbols', [symbol])  # List of symbols for multi-pair
+
     trading_mode = data.get('trading_mode', 'spot')
     leverage = int(data.get('leverage', 1))
-
-    # NEW: Get kill switch threshold
     kill_switch_threshold = int(data.get('kill_switch_threshold', 10))
 
-    # NEW: Set database mode based on real_mode
     db_mode = 'live' if real_mode else 'paper'
     set_trading_mode(db_mode)
 
@@ -258,21 +514,37 @@ def start_bot():
         return jsonify({"error": "Bot is already running"}), 400
 
     try:
-        # Updated to include trading_mode and leverage
         current_interface = TradingInterface(
             api_key, api_secret, exchange, real_mode, trading_mode, leverage
         )
 
-        current_bot = TradingBot(
-            current_interface,
-            symbol,
-            risk,
-            stop_loss,
-            take_profit,
-            strategy_type=strategy_type,
-            trade_amount=trade_amount,
-            kill_switch_threshold=kill_switch_threshold
-        )
+        # Choose bot type based on mode
+        if multi_pair_mode and len(symbols) > 1:
+            current_bot = MultiPairTradingBot(
+                current_interface,
+                symbols,  # Pass list of symbols
+                risk,
+                stop_loss,
+                take_profit,
+                strategy_type=strategy_type,
+                trade_amount=trade_amount,
+                kill_switch_threshold=kill_switch_threshold
+            )
+            bot_type = "Multi-Pair"
+            symbol_info = f"{len(symbols)} pairs: {', '.join(symbols[:3])}" + ("..." if len(symbols) > 3 else "")
+        else:
+            current_bot = TradingBot(
+                current_interface,
+                symbol,  # Single symbol
+                risk,
+                stop_loss,
+                take_profit,
+                strategy_type=strategy_type,
+                trade_amount=trade_amount,
+                kill_switch_threshold=kill_switch_threshold
+            )
+            bot_type = "Single-Pair"
+            symbol_info = symbol
 
         def run_bot():
             global bot_running
@@ -280,7 +552,6 @@ def start_bot():
                 try:
                     current_bot.run_once()
 
-                    # NEW: Check if kill switch was triggered
                     if current_bot.is_kill_switch_active():
                         print("Kill switch triggered - stopping bot automatically")
                         bot_running = False
@@ -299,17 +570,15 @@ def start_bot():
         strategy_name = "Custom Strategy" if strategy_type == "custom" else "Default MA Crossover"
         trade_info = f" with ${trade_amount} per trade" if trade_amount else " with balance-based sizing"
 
-        # NEW: Include trading mode and leverage in response
         mode_info = f" in {trading_mode.upper()} mode"
         if trading_mode == "futures" and leverage > 1:
             mode_info += f" (Leverage: {leverage}x)"
 
-        # NEW: Include database mode and kill switch info
         db_info = f" | Database: {db_mode.upper()}"
         kill_switch_info = f" | Kill Switch: {kill_switch_threshold} losses"
 
         return jsonify({
-            "message": f"Bot started successfully trading {symbol} using {strategy_name}{trade_info}{mode_info}{db_info}{kill_switch_info}"
+            "message": f"{bot_type} Bot started successfully trading {symbol_info} using {strategy_name}{trade_info}{mode_info}{db_info}{kill_switch_info}"
         })
 
     except Exception as e:
