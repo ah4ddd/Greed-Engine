@@ -83,7 +83,7 @@ function App() {
             <div className="main-content">
                 <div className="header">
                     <div className="header-left">
-                        <h1>GREED ENGINE <span className="header-separator">//</span> TERMINAL</h1>
+                        <h1>GREED ENGINE <span className="header-separator">{'//'}</span> TERMINAL</h1>
                     </div>
                     <div className="header-right">
                         <div className="trading-pair">{settings.symbol}</div>

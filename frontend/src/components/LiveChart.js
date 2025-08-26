@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceDot } from 'recharts';
 import axios from 'axios';
 
@@ -11,7 +11,7 @@ function LiveChart({ symbol, trades }) {
     const [recentTrade, setRecentTrade] = useState(null);
     const intervalRef = useRef();
 
-    const fetchRealMarketData = async () => {
+    const fetchRealMarketData = useCallback(async () => {
         try {
             // Fetch real Bitcoin market data
             const response = await fetch('https://api.coingecko.com/api/v3/coins/bitcoin');
@@ -30,9 +30,9 @@ function LiveChart({ symbol, trades }) {
                 supply: '19.7M BTC'
             });
         }
-    };
+    }, []);
 
-    const updateChart = async () => {
+    const updateChart = useCallback(async () => {
         try {
             const response = await axios.get(`/api/ohlcv?symbol=${symbol}&timeframe=1m&limit=50`);
             const newData = response.data.data.map((candle, index) => ({
@@ -87,7 +87,7 @@ function LiveChart({ symbol, trades }) {
             setPriceChange(Math.random() * 2 - 0.5);
             setIsLoading(false);
         }
-    };
+    }, [symbol, isLoading]);
 
     // Detect new trades and show animation
     useEffect(() => {
@@ -115,7 +115,7 @@ function LiveChart({ symbol, trades }) {
         return () => {
             if (intervalRef.current) clearInterval(intervalRef.current);
         };
-    }, [symbol]);
+    }, [updateChart, fetchRealMarketData]);
 
     const getTradeMarkers = () => {
         if (!trades || trades.length === 0) return [];

@@ -162,6 +162,35 @@ function BotControls({ settings, botStatus, onRefresh }) {
         }
     }, [botStatus.running, currentConfig.aggressive_mode, currentConfig.super_aggressive_mode]);
 
+    const generateDemoStrategyData = useCallback(() => {
+        const symbolBase = (currentConfig.multi_pair_mode ? currentConfig.symbols[0] : currentConfig.symbol)?.split('/')[0] || 'DEMO';
+        let basePrice = 100;
+
+        if (symbolBase.includes('BTC')) basePrice = 58000;
+        else if (symbolBase.includes('ETH')) basePrice = 3500;
+        else if (symbolBase.includes('ADA')) basePrice = 0.5;
+        else if (symbolBase.includes('SOL')) basePrice = 150;
+        else if (symbolBase.includes('DOT')) basePrice = 25;
+
+        const demoData = Array.from({ length: 30 }, (_, i) => {
+            const volatility = basePrice * 0.002;
+            const trend = Math.sin(i * 0.1) * (basePrice * 0.005);
+            const price = basePrice + trend + (Math.random() - 0.5) * volatility;
+            const fastMA = price + (Math.random() - 0.5) * (basePrice * 0.001);
+            const slowMA = price + (Math.random() - 0.5) * (basePrice * 0.002);
+
+            return {
+                time: new Date(Date.now() - (30 - i) * 60000).toLocaleTimeString(),
+                price: price,
+                fastMA: fastMA,
+                slowMA: slowMA,
+                timestamp: Date.now() - (30 - i) * 60000,
+                index: i
+            };
+        });
+        setChartData(demoData);
+    }, [currentConfig.multi_pair_mode, currentConfig.symbols, currentConfig.symbol]);
+
     // Fetch live chart data
     const fetchStrategyData = useCallback(async () => {
         try {
@@ -225,7 +254,7 @@ function BotControls({ settings, botStatus, onRefresh }) {
             console.error('Error fetching strategy data:', error);
             generateDemoStrategyData();
         }
-    }, [currentConfig.multi_pair_mode, currentConfig.symbols, currentConfig.symbol, currentConfig.aggressive_mode, currentConfig.super_aggressive_mode]);
+    }, [currentConfig.multi_pair_mode, currentConfig.symbols, currentConfig.symbol, currentConfig.aggressive_mode, currentConfig.super_aggressive_mode, generateDemoStrategyData]);
 
     const calculateMovingAverage = (prices, period) => {
         const ma = [];
@@ -239,35 +268,6 @@ function BotControls({ settings, botStatus, onRefresh }) {
         }
         return ma;
     };
-
-    const generateDemoStrategyData = useCallback(() => {
-        const symbolBase = (currentConfig.multi_pair_mode ? currentConfig.symbols[0] : currentConfig.symbol)?.split('/')[0] || 'DEMO';
-        let basePrice = 100;
-
-        if (symbolBase.includes('BTC')) basePrice = 58000;
-        else if (symbolBase.includes('ETH')) basePrice = 3500;
-        else if (symbolBase.includes('ADA')) basePrice = 0.5;
-        else if (symbolBase.includes('SOL')) basePrice = 150;
-        else if (symbolBase.includes('DOT')) basePrice = 25;
-
-        const demoData = Array.from({ length: 30 }, (_, i) => {
-            const volatility = basePrice * 0.002;
-            const trend = Math.sin(i * 0.1) * (basePrice * 0.005);
-            const price = basePrice + trend + (Math.random() - 0.5) * volatility;
-            const fastMA = price + (Math.random() - 0.5) * (basePrice * 0.001);
-            const slowMA = price + (Math.random() - 0.5) * (basePrice * 0.002);
-
-            return {
-                time: new Date(Date.now() - (30 - i) * 60000).toLocaleTimeString(),
-                price: price,
-                fastMA: fastMA,
-                slowMA: slowMA,
-                timestamp: Date.now() - (30 - i) * 60000,
-                index: i
-            };
-        });
-        setChartData(demoData);
-    }, [currentConfig.multi_pair_mode, currentConfig.symbols, currentConfig.symbol]);
 
     const getTradeMarkers = () => {
         if (!trades.length || !chartData.length) return [];
@@ -350,7 +350,14 @@ function BotControls({ settings, botStatus, onRefresh }) {
             }, updateInterval);
             return () => clearInterval(interval);
         }
-    }, [botStatus.running, fetchStrategyData, fetchPerformanceStats]);
+
+    }, [
+        botStatus.running,
+        fetchStrategyData,
+        fetchPerformanceStats,
+        currentConfig.aggressive_mode,
+        currentConfig.super_aggressive_mode
+    ]);
 
     const startBot = async () => {
         // Enhanced validation using currentConfig

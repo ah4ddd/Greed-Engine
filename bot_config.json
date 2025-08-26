@@ -15,7 +15,7 @@
   "multi_pair_mode": false,
   "aggressive_mode": true,
   "super_aggressive_mode": false,
-  "trade_amount": 1000,
+  "trade_amount": 10000,
   "api_key": "",
   "api_secret": "",
   "exchange": "binance",
