@@ -16,29 +16,28 @@ function BotControls({ settings, botStatus, onRefresh }) {
         avgLoss: 0
     });
 
-    // EXISTING multi-pair trading state
-    const [multiPairMode, setMultiPairMode] = useState(() => {
-        const saved = localStorage.getItem('bot_multi_pair_mode');
-        return saved ? JSON.parse(saved) : false;
+    // Enhanced configuration state - load from API
+    const [currentConfig, setCurrentConfig] = useState({
+        strategy_type: 'default_ma',
+        risk: 1.0,
+        stop_loss: 1.0,
+        take_profit: 3.0,
+        symbol: 'BTC/USDT',
+        symbols: ['BTC/USDT'],
+        trading_mode: 'spot',
+        leverage: 1,
+        kill_switch_threshold: 5,
+        multi_pair_mode: false,
+        aggressive_mode: false,
+        super_aggressive_mode: false,
+        trade_amount: 1000,
+        api_key: '',
+        api_secret: '',
+        exchange: 'binance',
+        real_mode: false
     });
 
-    const [selectedPairs, setSelectedPairs] = useState(() => {
-        const saved = localStorage.getItem('bot_selected_pairs');
-        return saved ? JSON.parse(saved) : ['BTC/USDT'];
-    });
-
-    // NEW: Aggressive trading mode state
-    const [aggressiveMode, setAggressiveMode] = useState(() => {
-        const saved = localStorage.getItem('bot_aggressive_mode');
-        return saved ? JSON.parse(saved) : false;
-    });
-
-    const [superAggressiveMode, setSuperAggressiveMode] = useState(() => {
-        const saved = localStorage.getItem('bot_super_aggressive_mode');
-        return saved ? JSON.parse(saved) : false;
-    });
-
-    // NEW: Performance tracking state
+    // Performance tracking state
     const [performanceStats, setPerformanceStats] = useState({
         total_pnl: 0,
         total_trades: 0,
@@ -55,99 +54,118 @@ function BotControls({ settings, botStatus, onRefresh }) {
         'LTC/USDT', 'XRP/USDT', 'DOGE/USDT', 'BNB/USDT', 'TRX/USDT'
     ];
 
-    // Save aggressive mode settings
-    const handleAggressiveModeChange = (enabled) => {
-        setAggressiveMode(enabled);
-        localStorage.setItem('bot_aggressive_mode', JSON.stringify(enabled));
-        if (enabled) {
-            setSuperAggressiveMode(false);
-            localStorage.setItem('bot_super_aggressive_mode', JSON.stringify(false));
+    // Load configuration from API on component mount
+    useEffect(() => {
+        loadConfigFromAPI();
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+    const loadConfigFromAPI = async () => {
+        try {
+            const response = await axios.get('/api/load-config');
+            const loadedConfig = response.data;
+
+            console.log('BotControls loaded config:', loadedConfig);
+
+            // Ensure symbols is always an array
+            if (!Array.isArray(loadedConfig.symbols)) {
+                if (loadedConfig.symbol) {
+                    loadedConfig.symbols = [loadedConfig.symbol];
+                } else {
+                    loadedConfig.symbols = ['BTC/USDT'];
+                }
+            }
+
+            setCurrentConfig(loadedConfig);
+            console.log('BotControls updated config state:', loadedConfig);
+        } catch (error) {
+            console.error('Error loading config in BotControls:', error);
+            // Fallback to settings prop if API fails
+            if (settings) {
+                setCurrentConfig(prevConfig => ({ ...prevConfig, ...settings }));
+            }
         }
     };
 
-    const handleSuperAggressiveModeChange = (enabled) => {
-        setSuperAggressiveMode(enabled);
-        localStorage.setItem('bot_super_aggressive_mode', JSON.stringify(enabled));
-        if (enabled) {
-            setAggressiveMode(false);
-            localStorage.setItem('bot_aggressive_mode', JSON.stringify(false));
-            setMultiPairMode(true); // Force multi-pair for super aggressive
-        }
-    };
+    // Update when settings prop changes
+    useEffect(() => {
+        if (settings) {
+            setCurrentConfig(prevConfig => {
+                const updatedConfig = { ...prevConfig, ...settings };
 
-    // EXISTING multi-pair functions
-    const handleMultiPairModeChange = (enabled) => {
-        setMultiPairMode(enabled);
-        localStorage.setItem('bot_multi_pair_mode', JSON.stringify(enabled));
-        if (!enabled && superAggressiveMode) {
-            setSuperAggressiveMode(false);
-            localStorage.setItem('bot_super_aggressive_mode', JSON.stringify(false));
-        }
-    };
+                // Ensure symbols array consistency
+                if (!Array.isArray(updatedConfig.symbols)) {
+                    updatedConfig.symbols = updatedConfig.symbol ? [updatedConfig.symbol] : ['BTC/USDT'];
+                }
 
-    const handleSelectedPairsChange = (pairs) => {
-        setSelectedPairs(pairs);
-        localStorage.setItem('bot_selected_pairs', JSON.stringify(pairs));
+                return updatedConfig;
+            });
+        }
+    }, [settings]);
+
+    // Configuration change handlers
+    const handleConfigChange = async (field, value) => {
+        const updatedConfig = { ...currentConfig, [field]: value };
+
+        // Special handling for mode changes
+        if (field === 'super_aggressive_mode' && value) {
+            updatedConfig.aggressive_mode = false;
+            updatedConfig.multi_pair_mode = true;
+            if (updatedConfig.symbols.length < 3) {
+                updatedConfig.symbols = ['BTC/USDT', 'ETH/USDT', 'ADA/USDT'];
+            }
+        } else if (field === 'aggressive_mode' && value) {
+            updatedConfig.super_aggressive_mode = false;
+        } else if (field === 'multi_pair_mode' && !value) {
+            updatedConfig.super_aggressive_mode = false;
+        }
+
+        // Update symbols array consistency
+        if (field === 'symbols' && Array.isArray(value)) {
+            updatedConfig.symbol = value.length > 0 ? value[0] : 'BTC/USDT';
+        }
+
+        setCurrentConfig(updatedConfig);
+
+        // Save to API
+        try {
+            await axios.post('/api/save-config', updatedConfig);
+            console.log('Config saved successfully:', updatedConfig);
+        } catch (error) {
+            console.error('Error saving config:', error);
+        }
     };
 
     const addPair = (pair) => {
-        if (!selectedPairs.includes(pair) && selectedPairs.length < 8) {
-            const newPairs = [...selectedPairs, pair];
-            handleSelectedPairsChange(newPairs);
+        const maxPairs = currentConfig.super_aggressive_mode ? 15 : 8;
+        if (!currentConfig.symbols.includes(pair) && currentConfig.symbols.length < maxPairs) {
+            const newSymbols = [...currentConfig.symbols, pair];
+            handleConfigChange('symbols', newSymbols);
         }
     };
 
     const removePair = (pair) => {
-        if (selectedPairs.length > 1) {
-            const newPairs = selectedPairs.filter(p => p !== pair);
-            handleSelectedPairsChange(newPairs);
+        if (currentConfig.symbols.length > 1) {
+            const newSymbols = currentConfig.symbols.filter(p => p !== pair);
+            handleConfigChange('symbols', newSymbols);
         }
     };
 
-    // Handle trade amount change
-    const [tradeAmount, setTradeAmount] = useState(() => {
-        const saved = localStorage.getItem('bot_trade_amount');
-        if (saved) return parseFloat(saved);
-        return settings.trade_amount || 1000;
-    });
-
-    const handleTradeAmountChange = (value) => {
-        const amount = parseFloat(value);
-        setTradeAmount(amount);
-        localStorage.setItem('bot_trade_amount', amount.toString());
-    };
-
-    // Load settings on mount
-    useEffect(() => {
-        const savedMode = localStorage.getItem('bot_multi_pair_mode');
-        const savedPairs = localStorage.getItem('bot_selected_pairs');
-        const savedAmount = localStorage.getItem('bot_trade_amount');
-        const savedAggressive = localStorage.getItem('bot_aggressive_mode');
-        const savedSuperAggressive = localStorage.getItem('bot_super_aggressive_mode');
-
-        if (savedMode !== null) setMultiPairMode(JSON.parse(savedMode));
-        if (savedPairs !== null) setSelectedPairs(JSON.parse(savedPairs));
-        if (savedAggressive !== null) setAggressiveMode(JSON.parse(savedAggressive));
-        if (savedSuperAggressive !== null) setSuperAggressiveMode(JSON.parse(savedSuperAggressive));
-        if (!savedAmount && settings.trade_amount) setTradeAmount(settings.trade_amount);
-    }, [settings.trade_amount]);
-
-    // NEW: Fetch performance stats for aggressive bots
+    // Fetch performance stats for aggressive bots
     const fetchPerformanceStats = useCallback(async () => {
-        if (botStatus.running && (aggressiveMode || superAggressiveMode)) {
+        if (botStatus.running && (currentConfig.aggressive_mode || currentConfig.super_aggressive_mode)) {
             try {
                 const response = await axios.get('/api/bot-performance');
                 setPerformanceStats(response.data);
             } catch (error) {
-                console.log('Performance stats not available (normal for non-aggressive bots)');
+                console.log('Performance stats not available');
             }
         }
-    }, [botStatus.running, aggressiveMode, superAggressiveMode]);
+    }, [botStatus.running, currentConfig.aggressive_mode, currentConfig.super_aggressive_mode]);
 
     // Fetch live chart data
     const fetchStrategyData = useCallback(async () => {
         try {
-            const symbolToFetch = multiPairMode ? selectedPairs[0] : settings.symbol;
+            const symbolToFetch = currentConfig.multi_pair_mode ? currentConfig.symbols[0] : currentConfig.symbol;
 
             if (!symbolToFetch) {
                 console.warn('No trading symbol set, skipping chart data fetch');
@@ -156,9 +174,11 @@ function BotControls({ settings, botStatus, onRefresh }) {
             }
 
             // Use fast API endpoint for aggressive modes
-            const endpoint = (aggressiveMode || superAggressiveMode) ? '/api/ohlcv-fast' : '/api/ohlcv';
+            const endpoint = (currentConfig.aggressive_mode || currentConfig.super_aggressive_mode) ? '/api/ohlcv-fast' : '/api/ohlcv';
+            const timeframe = (currentConfig.aggressive_mode || currentConfig.super_aggressive_mode) ? '5m' : '1m';
+
             const [ohlcvRes, tradesRes] = await Promise.all([
-                axios.get(`${endpoint}?symbol=${symbolToFetch}&timeframe=${(aggressiveMode || superAggressiveMode) ? '5m' : '1m'}&limit=50`),
+                axios.get(`${endpoint}?symbol=${symbolToFetch}&timeframe=${timeframe}&limit=50`),
                 axios.get('/api/trades')
             ]);
 
@@ -205,7 +225,7 @@ function BotControls({ settings, botStatus, onRefresh }) {
             console.error('Error fetching strategy data:', error);
             generateDemoStrategyData();
         }
-    }, [multiPairMode, selectedPairs, settings.symbol, aggressiveMode, superAggressiveMode]);
+    }, [currentConfig.multi_pair_mode, currentConfig.symbols, currentConfig.symbol, currentConfig.aggressive_mode, currentConfig.super_aggressive_mode]);
 
     const calculateMovingAverage = (prices, period) => {
         const ma = [];
@@ -220,8 +240,8 @@ function BotControls({ settings, botStatus, onRefresh }) {
         return ma;
     };
 
-    const generateDemoStrategyData = () => {
-        const symbolBase = (multiPairMode ? selectedPairs[0] : settings.symbol)?.split('/')[0] || 'DEMO';
+    const generateDemoStrategyData = useCallback(() => {
+        const symbolBase = (currentConfig.multi_pair_mode ? currentConfig.symbols[0] : currentConfig.symbol)?.split('/')[0] || 'DEMO';
         let basePrice = 100;
 
         if (symbolBase.includes('BTC')) basePrice = 58000;
@@ -247,9 +267,8 @@ function BotControls({ settings, botStatus, onRefresh }) {
             };
         });
         setChartData(demoData);
-    };
+    }, [currentConfig.multi_pair_mode, currentConfig.symbols, currentConfig.symbol]);
 
-    // Get trade markers for the chart
     const getTradeMarkers = () => {
         if (!trades.length || !chartData.length) return [];
 
@@ -269,7 +288,6 @@ function BotControls({ settings, botStatus, onRefresh }) {
         }).filter(Boolean);
     };
 
-    // Custom tooltip for strategy chart
     const CustomStrategyTooltip = ({ active, payload, label }) => {
         if (active && payload && payload.length) {
             const data = payload[0].payload;
@@ -300,14 +318,13 @@ function BotControls({ settings, botStatus, onRefresh }) {
                 'Executing strategy logic...'
             ];
 
-            // Aggressive modes have faster activity updates
-            const updateInterval = (aggressiveMode || superAggressiveMode) ? 1000 : 3000;
+            const updateInterval = (currentConfig.aggressive_mode || currentConfig.super_aggressive_mode) ? 1000 : 3000;
 
             const interval = setInterval(() => {
                 let randomActivity;
-                if (superAggressiveMode) {
-                    randomActivity = `SUPER AGGRESSIVE: ${activities[Math.floor(Math.random() * activities.length)]} (${selectedPairs.length} pairs)`;
-                } else if (aggressiveMode) {
+                if (currentConfig.super_aggressive_mode) {
+                    randomActivity = `SUPER AGGRESSIVE: ${activities[Math.floor(Math.random() * activities.length)]} (${currentConfig.symbols.length} pairs)`;
+                } else if (currentConfig.aggressive_mode) {
                     randomActivity = `AGGRESSIVE: ${activities[Math.floor(Math.random() * activities.length)]} (5-min candles)`;
                 } else {
                     randomActivity = activities[Math.floor(Math.random() * activities.length)];
@@ -319,15 +336,14 @@ function BotControls({ settings, botStatus, onRefresh }) {
         } else {
             setActivity('Bot stopped - Waiting for commands');
         }
-    }, [botStatus.running, aggressiveMode, superAggressiveMode, selectedPairs.length]);
+    }, [botStatus.running, currentConfig.aggressive_mode, currentConfig.super_aggressive_mode, currentConfig.symbols.length]);
 
     useEffect(() => {
         fetchStrategyData();
         fetchPerformanceStats();
 
         if (botStatus.running) {
-            // More frequent updates for aggressive modes
-            const updateInterval = (aggressiveMode || superAggressiveMode) ? 3000 : 5000;
+            const updateInterval = (currentConfig.aggressive_mode || currentConfig.super_aggressive_mode) ? 3000 : 5000;
             const interval = setInterval(() => {
                 fetchStrategyData();
                 fetchPerformanceStats();
@@ -337,18 +353,18 @@ function BotControls({ settings, botStatus, onRefresh }) {
     }, [botStatus.running, fetchStrategyData, fetchPerformanceStats]);
 
     const startBot = async () => {
-        // Enhanced validation
-        if (!multiPairMode && (!settings.symbol || settings.symbol.trim() === '')) {
+        // Enhanced validation using currentConfig
+        if (!currentConfig.multi_pair_mode && (!currentConfig.symbol || currentConfig.symbol.trim() === '')) {
             setMessage('Error: Please set a trading pair in Settings first');
             return;
         }
 
-        if (multiPairMode && selectedPairs.length === 0) {
+        if (currentConfig.multi_pair_mode && currentConfig.symbols.length === 0) {
             setMessage('Error: Please select at least one trading pair for multi-pair mode');
             return;
         }
 
-        if (superAggressiveMode && selectedPairs.length < 3) {
+        if (currentConfig.super_aggressive_mode && currentConfig.symbols.length < 3) {
             setMessage('Error: Super Aggressive mode requires at least 3 trading pairs');
             return;
         }
@@ -358,42 +374,39 @@ function BotControls({ settings, botStatus, onRefresh }) {
 
         try {
             let endpoint = '/api/start';
-            let botData = { ...settings, trade_amount: tradeAmount };
+            let botData = { ...currentConfig };
 
             // Determine which bot type to use
-            if (superAggressiveMode) {
+            if (currentConfig.super_aggressive_mode) {
                 endpoint = '/api/start-super-aggressive';
                 botData = {
-                    ...settings,
-                    symbols: selectedPairs,
-                    risk: Math.max(settings.risk * 1.5, 3.0), // Higher risk for super aggressive
-                    stop_loss: Math.max(settings.stop_loss, 1.5),
-                    take_profit: Math.max(settings.take_profit, 2.5),
+                    ...currentConfig,
+                    symbols: currentConfig.symbols,
+                    risk: Math.max(currentConfig.risk * 1.5, 3.0),
+                    stop_loss: Math.max(currentConfig.stop_loss, 1.5),
+                    take_profit: Math.max(currentConfig.take_profit, 2.5),
                     strategy_type: 'aggressive_ema',
-                    trade_amount: tradeAmount,
                     kill_switch_threshold: 20
                 };
-            } else if (aggressiveMode) {
+            } else if (currentConfig.aggressive_mode) {
                 endpoint = '/api/start-fast';
                 botData = {
-                    ...settings,
-                    symbol: multiPairMode ? selectedPairs[0] : settings.symbol,
-                    risk: Math.max(settings.risk * 1.2, 2.0), // Moderate risk increase
-                    stop_loss: Math.max(settings.stop_loss, 1.5),
-                    take_profit: Math.max(settings.take_profit, 2.0),
+                    ...currentConfig,
+                    symbol: currentConfig.multi_pair_mode ? currentConfig.symbols[0] : currentConfig.symbol,
+                    risk: Math.max(currentConfig.risk * 1.2, 2.0),
+                    stop_loss: Math.max(currentConfig.stop_loss, 1.5),
+                    take_profit: Math.max(currentConfig.take_profit, 2.0),
                     strategy_type: 'aggressive_ema',
-                    trade_amount: tradeAmount,
                     kill_switch_threshold: 15
                 };
             } else {
-                // Original bot logic
+                // Original bot logic with enhanced config
                 botData = {
-                    ...settings,
-                    trade_amount: tradeAmount,
-                    symbol: multiPairMode ? selectedPairs[0] : settings.symbol,
-                    symbols: multiPairMode ? selectedPairs : [settings.symbol],
-                    multi_pair_mode: multiPairMode,
-                    risk: multiPairMode ? Math.max(settings.risk / selectedPairs.length, 0.5) : settings.risk
+                    ...currentConfig,
+                    symbol: currentConfig.multi_pair_mode ? currentConfig.symbols[0] : currentConfig.symbol,
+                    symbols: currentConfig.multi_pair_mode ? currentConfig.symbols : [currentConfig.symbol],
+                    multi_pair_mode: currentConfig.multi_pair_mode,
+                    risk: currentConfig.multi_pair_mode ? Math.max(currentConfig.risk / currentConfig.symbols.length, 0.5) : currentConfig.risk
                 };
             }
 
@@ -403,12 +416,12 @@ function BotControls({ settings, botStatus, onRefresh }) {
             setMessage(response.data.message || 'Trading engine activated!');
 
             // Show mode-specific info
-            if (superAggressiveMode) {
-                setMessage(prev => prev + `\n🚀 SUPER AGGRESSIVE MODE: ${selectedPairs.length} pairs, 15-second checks`);
-            } else if (aggressiveMode) {
+            if (currentConfig.super_aggressive_mode) {
+                setMessage(prev => prev + `\n🚀 SUPER AGGRESSIVE MODE: ${currentConfig.symbols.length} pairs, 15-second checks`);
+            } else if (currentConfig.aggressive_mode) {
                 setMessage(prev => prev + `\n⚡ AGGRESSIVE MODE: 5-minute candles, 30-second cooldown`);
-            } else if (multiPairMode) {
-                setMessage(prev => prev + `\n📊 Multi-pair trading: ${selectedPairs.length} pairs`);
+            } else if (currentConfig.multi_pair_mode) {
+                setMessage(prev => prev + `\n📊 Multi-pair trading: ${currentConfig.symbols.length} pairs`);
             }
 
             onRefresh();
@@ -433,7 +446,7 @@ function BotControls({ settings, botStatus, onRefresh }) {
     };
 
     const runBacktest = async () => {
-        const symbolToTest = multiPairMode ? selectedPairs[0] : settings.symbol;
+        const symbolToTest = currentConfig.multi_pair_mode ? currentConfig.symbols[0] : currentConfig.symbol;
 
         if (!symbolToTest || symbolToTest.trim() === '') {
             setMessage('Error: Please set a trading pair in Settings first');
@@ -446,12 +459,12 @@ function BotControls({ settings, botStatus, onRefresh }) {
             await axios.post('/api/backtest', {
                 symbol: symbolToTest,
                 years: 1,
-                risk: multiPairMode ? settings.risk / selectedPairs.length : settings.risk,
-                stop_loss: settings.stop_loss,
-                take_profit: settings.take_profit,
-                multi_pair_mode: multiPairMode,
-                symbols: multiPairMode ? selectedPairs : [symbolToTest],
-                aggressive_mode: aggressiveMode || superAggressiveMode
+                risk: currentConfig.multi_pair_mode ? currentConfig.risk / currentConfig.symbols.length : currentConfig.risk,
+                stop_loss: currentConfig.stop_loss,
+                take_profit: currentConfig.take_profit,
+                multi_pair_mode: currentConfig.multi_pair_mode,
+                symbols: currentConfig.multi_pair_mode ? currentConfig.symbols : [symbolToTest],
+                aggressive_mode: currentConfig.aggressive_mode || currentConfig.super_aggressive_mode
             });
             setMessage('Backtest analysis complete: Strategy validation successful');
         } catch (error) {
@@ -467,7 +480,7 @@ function BotControls({ settings, botStatus, onRefresh }) {
             <div className="control-panel">
                 <h3>Bot Controls</h3>
 
-                {/* NEW: Aggressive Trading Mode Selection */}
+                {/* Trading Speed Mode Selection */}
                 <div className="aggressive-mode-section">
                     <h4>Trading Speed Mode</h4>
 
@@ -476,12 +489,10 @@ function BotControls({ settings, botStatus, onRefresh }) {
                             <input
                                 type="radio"
                                 name="tradingMode"
-                                checked={!aggressiveMode && !superAggressiveMode}
+                                checked={!currentConfig.aggressive_mode && !currentConfig.super_aggressive_mode}
                                 onChange={() => {
-                                    setAggressiveMode(false);
-                                    setSuperAggressiveMode(false);
-                                    localStorage.setItem('bot_aggressive_mode', 'false');
-                                    localStorage.setItem('bot_super_aggressive_mode', 'false');
+                                    handleConfigChange('aggressive_mode', false);
+                                    handleConfigChange('super_aggressive_mode', false);
                                 }}
                             />
                             <span className="mode-title">Conservative (Original)</span>
@@ -494,8 +505,8 @@ function BotControls({ settings, botStatus, onRefresh }) {
                             <input
                                 type="radio"
                                 name="tradingMode"
-                                checked={aggressiveMode}
-                                onChange={(e) => handleAggressiveModeChange(e.target.checked)}
+                                checked={currentConfig.aggressive_mode}
+                                onChange={(e) => handleConfigChange('aggressive_mode', e.target.checked)}
                             />
                             <span className="mode-title">⚡ Aggressive (Fast)</span>
                             <div className="mode-description">
@@ -507,8 +518,8 @@ function BotControls({ settings, botStatus, onRefresh }) {
                             <input
                                 type="radio"
                                 name="tradingMode"
-                                checked={superAggressiveMode}
-                                onChange={(e) => handleSuperAggressiveModeChange(e.target.checked)}
+                                checked={currentConfig.super_aggressive_mode}
+                                onChange={(e) => handleConfigChange('super_aggressive_mode', e.target.checked)}
                             />
                             <span className="mode-title">🚀 Super Aggressive (Maximum)</span>
                             <div className="mode-description">
@@ -517,7 +528,7 @@ function BotControls({ settings, botStatus, onRefresh }) {
                         </label>
                     </div>
 
-                    {(aggressiveMode || superAggressiveMode) && (
+                    {(currentConfig.aggressive_mode || currentConfig.super_aggressive_mode) && (
                         <div className="aggressive-warning">
                             <strong>⚠️ High-Frequency Trading Warning:</strong>
                             <ul>
@@ -530,44 +541,44 @@ function BotControls({ settings, botStatus, onRefresh }) {
                     )}
                 </div>
 
-                {/* Multi-Pair Mode (enhanced for super aggressive) */}
+                {/* Multi-Pair Mode */}
                 <div className="multi-pair-section">
                     <label className="multi-pair-toggle">
                         <input
                             type="checkbox"
-                            checked={multiPairMode}
-                            onChange={(e) => handleMultiPairModeChange(e.target.checked)}
-                            disabled={superAggressiveMode} // Force enabled for super aggressive
+                            checked={currentConfig.multi_pair_mode}
+                            onChange={(e) => handleConfigChange('multi_pair_mode', e.target.checked)}
+                            disabled={currentConfig.super_aggressive_mode}
                             className="multi-pair-checkbox"
                         />
                         <span className="multi-pair-title">
-                            Multi-Pair Trading Mode {superAggressiveMode && "(Required)"}
+                            Multi-Pair Trading Mode {currentConfig.super_aggressive_mode && "(Required)"}
                         </span>
                     </label>
                     <p className="multi-pair-description">
                         Trade multiple pairs simultaneously for more opportunities
-                        {superAggressiveMode && (
+                        {currentConfig.super_aggressive_mode && (
                             <><br /><strong>🚀 Super Aggressive mode requires at least 3 pairs</strong></>
                         )}
                     </p>
 
-                    {(multiPairMode || superAggressiveMode) && (
+                    {(currentConfig.multi_pair_mode || currentConfig.super_aggressive_mode) && (
                         <div className="multi-pair-content">
                             <div className="multi-pair-header">
                                 <span>Selected Trading Pairs</span>
                                 <span className="pair-counter">
-                                    {selectedPairs.length}/{superAggressiveMode ? '15' : '8'}
-                                    {superAggressiveMode && selectedPairs.length < 3 && (
+                                    {currentConfig.symbols.length}/{currentConfig.super_aggressive_mode ? '15' : '8'}
+                                    {currentConfig.super_aggressive_mode && currentConfig.symbols.length < 3 && (
                                         <span className="error-text"> (Need 3+ for Super Aggressive)</span>
                                     )}
                                 </span>
                             </div>
 
                             <div className="selected-pairs-container">
-                                {selectedPairs.map(pair => (
+                                {currentConfig.symbols.map(pair => (
                                     <div key={pair} className="pair-tag">
                                         <span>{pair}</span>
-                                        {selectedPairs.length > 1 && (
+                                        {currentConfig.symbols.length > 1 && (
                                             <button
                                                 onClick={() => removePair(pair)}
                                                 className="pair-remove-btn"
@@ -584,12 +595,12 @@ function BotControls({ settings, botStatus, onRefresh }) {
                                 <h4 className="add-pairs-header">Add Popular Pairs:</h4>
                                 <div className="popular-pairs-grid">
                                     {popularPairs
-                                        .filter(pair => !selectedPairs.includes(pair))
+                                        .filter(pair => !currentConfig.symbols.includes(pair))
                                         .map(pair => (
                                             <button
                                                 key={pair}
                                                 onClick={() => addPair(pair)}
-                                                disabled={selectedPairs.length >= (superAggressiveMode ? 15 : 8)}
+                                                disabled={currentConfig.symbols.length >= (currentConfig.super_aggressive_mode ? 15 : 8)}
                                                 className="add-pair-btn"
                                             >
                                                 + {pair}
@@ -603,15 +614,15 @@ function BotControls({ settings, botStatus, onRefresh }) {
                                 <div className="benefits-title">Multi-Pair Benefits:</div>
                                 <ul className="benefits-list">
                                     <li>
-                                        Risk split: {Math.max((settings.risk / selectedPairs.length), 0.3).toFixed(2)}% per pair
-                                        {superAggressiveMode && " (minimum 0.3%)"}
+                                        Risk split: {Math.max((currentConfig.risk / currentConfig.symbols.length), 0.3).toFixed(2)}% per pair
+                                        {currentConfig.super_aggressive_mode && " (minimum 0.3%)"}
                                     </li>
                                     <li>
-                                        Expected trades: {superAggressiveMode ? '30-60' : (aggressiveMode ? '15-35' : '10-25')}/day
+                                        Expected trades: {currentConfig.super_aggressive_mode ? '30-60' : (currentConfig.aggressive_mode ? '15-35' : '10-25')}/day
                                     </li>
                                     <li>Diversification reduces single-pair risk</li>
                                     <li>Up to 2 positions per pair simultaneously</li>
-                                    {superAggressiveMode && <li>🚀 Maximum frequency: 15-second market checks</li>}
+                                    {currentConfig.super_aggressive_mode && <li>🚀 Maximum frequency: 15-second market checks</li>}
                                 </ul>
                             </div>
                         </div>
@@ -627,31 +638,32 @@ function BotControls({ settings, botStatus, onRefresh }) {
                             step="100"
                             min="100"
                             max="50000"
-                            value={tradeAmount}
-                            onChange={(e) => handleTradeAmountChange(e.target.value)}
+                            value={currentConfig.trade_amount}
+                            onChange={(e) => handleConfigChange('trade_amount', parseFloat(e.target.value))}
                             placeholder="Enter trade amount in USD"
+                            className="trade-amount-input"
                         />
                         <small className="form-hint">
-                            Amount per trade (recommended: ${superAggressiveMode ? '300-1000' : (aggressiveMode ? '500-2000' : '1000-5000')})
+                            Amount per trade (recommended: ${currentConfig.super_aggressive_mode ? '300-1000' : (currentConfig.aggressive_mode ? '500-2000' : '1000-5000')})
                         </small>
                     </div>
                 </div>
 
                 {/* Enhanced Status Display */}
                 <div className="bot-status-display">
-                    <div className={`status-indicator-large ${botStatus.running ? 'active' : 'inactive'} ${superAggressiveMode ? 'super-aggressive' : (aggressiveMode ? 'aggressive' : '')}`}>
+                    <div className={`status-indicator-large ${botStatus.running ? 'active' : 'inactive'} ${currentConfig.super_aggressive_mode ? 'super-aggressive' : (currentConfig.aggressive_mode ? 'aggressive' : '')}`}>
                         <div className="status-pulse"></div>
                         <div className="status-text">
                             {botStatus.running ?
-                                (superAggressiveMode ? 'SUPER AGGRESSIVE ENGINE ACTIVE' :
-                                    aggressiveMode ? 'AGGRESSIVE ENGINE ACTIVE' :
+                                (currentConfig.super_aggressive_mode ? 'SUPER AGGRESSIVE ENGINE ACTIVE' :
+                                    currentConfig.aggressive_mode ? 'AGGRESSIVE ENGINE ACTIVE' :
                                         'TRADING ENGINE ACTIVE')
                                 : 'SYSTEM STANDBY'}
                         </div>
                     </div>
 
                     {/* Performance stats for aggressive modes */}
-                    {botStatus.running && (aggressiveMode || superAggressiveMode) && (
+                    {botStatus.running && (currentConfig.aggressive_mode || currentConfig.super_aggressive_mode) && (
                         <div className="performance-stats">
                             <div className="stats-row">
                                 <span>Total P&L: </span>
@@ -684,11 +696,11 @@ function BotControls({ settings, botStatus, onRefresh }) {
 
                 <div className="control-buttons">
                     <button
-                        className={`btn btn-success ${botStatus.running ? 'disabled' : ''} ${superAggressiveMode ? 'super-aggressive-btn' : (aggressiveMode ? 'aggressive-btn' : '')}`}
+                        className={`btn btn-success ${botStatus.running ? 'disabled' : ''} ${currentConfig.super_aggressive_mode ? 'super-aggressive-btn' : (currentConfig.aggressive_mode ? 'aggressive-btn' : '')}`}
                         onClick={startBot}
                         disabled={loading || botStatus.running}
                         style={{
-                            backgroundColor: superAggressiveMode ? '#ff4444' : (aggressiveMode ? '#ff8800' : '#28a745'),
+                            backgroundColor: currentConfig.super_aggressive_mode ? '#ff4444' : (currentConfig.aggressive_mode ? '#ff8800' : '#28a745'),
                             color: 'white',
                             border: 'none',
                             padding: '12px 24px',
@@ -701,7 +713,7 @@ function BotControls({ settings, botStatus, onRefresh }) {
                         {loading && !botStatus.running ? (
                             <><span className="btn-spinner"></span>STARTING...</>
                         ) : (
-                            <>START {superAggressiveMode ? 'SUPER AGGRESSIVE' : (aggressiveMode ? 'AGGRESSIVE' : '')} ENGINE</>
+                            <>START {currentConfig.super_aggressive_mode ? 'SUPER AGGRESSIVE' : (currentConfig.aggressive_mode ? 'AGGRESSIVE' : '')} ENGINE</>
                         )}
                     </button>
 
@@ -743,36 +755,36 @@ function BotControls({ settings, botStatus, onRefresh }) {
                 {/* Mode-specific recommendations */}
                 <div className="recommended-settings">
                     <div className="settings-title">
-                        {superAggressiveMode ? 'Super Aggressive Mode Settings' :
-                            aggressiveMode ? 'Aggressive Mode Settings' :
+                        {currentConfig.super_aggressive_mode ? 'Super Aggressive Mode Settings' :
+                            currentConfig.aggressive_mode ? 'Aggressive Mode Settings' :
                                 'Recommended Settings'}
                     </div>
                     <div className="settings-grid">
                         <div className="setting-item">
                             <span className="setting-label">Stop Loss:</span>
                             <span className="setting-value">
-                                {(aggressiveMode || superAggressiveMode) ? '1.5-2.5%' : '2-4%'}
-                                (current: {settings.stop_loss}%)
+                                {(currentConfig.aggressive_mode || currentConfig.super_aggressive_mode) ? '1.5-2.5%' : '2-4%'}
+                                (current: {currentConfig.stop_loss}%)
                             </span>
                         </div>
                         <div className="setting-item">
                             <span className="setting-label">Take Profit:</span>
                             <span className="setting-value">
-                                {(aggressiveMode || superAggressiveMode) ? '2-4%' : '4-8%'}
-                                (current: {settings.take_profit}%)
+                                {(currentConfig.aggressive_mode || currentConfig.super_aggressive_mode) ? '2-4%' : '4-8%'}
+                                (current: {currentConfig.take_profit}%)
                             </span>
                         </div>
                         <div className="setting-item">
                             <span className="setting-label">Expected Frequency:</span>
                             <span className="setting-value">
-                                {superAggressiveMode ? '30-60 trades/day' :
-                                    aggressiveMode ? '10-25 trades/day' : '3-8 trades/day'}
+                                {currentConfig.super_aggressive_mode ? '30-60 trades/day' :
+                                    currentConfig.aggressive_mode ? '10-25 trades/day' : '3-8 trades/day'}
                             </span>
                         </div>
                     </div>
-                    {(aggressiveMode || superAggressiveMode) && (
+                    {(currentConfig.aggressive_mode || currentConfig.super_aggressive_mode) && (
                         <div className="settings-warning">
-                            {superAggressiveMode ?
+                            {currentConfig.super_aggressive_mode ?
                                 'Super Aggressive mode uses 15-second market checks for maximum opportunity capture.' :
                                 'Aggressive mode uses 5-minute candles and 30-second cooldowns for faster execution.'}
                         </div>
@@ -780,7 +792,7 @@ function BotControls({ settings, botStatus, onRefresh }) {
                 </div>
 
                 {message && (
-                    <div className={`message ${message.includes('Error') ? 'error' : 'success'} ${superAggressiveMode ? 'super-aggressive-message' : (aggressiveMode ? 'aggressive-message' : '')}`} style={{
+                    <div className={`message ${message.includes('Error') ? 'error' : 'success'} ${currentConfig.super_aggressive_mode ? 'super-aggressive-message' : (currentConfig.aggressive_mode ? 'aggressive-message' : '')}`} style={{
                         marginTop: '15px',
                         padding: '12px',
                         borderRadius: '6px',
@@ -795,12 +807,12 @@ function BotControls({ settings, botStatus, onRefresh }) {
                 )}
             </div>
 
-            {/* Live Strategy Visualization (enhanced for aggressive modes) */}
+            {/* Live Strategy Visualization */}
             <div className="strategy-visualization">
                 <h3>
                     Live Strategy Execution
-                    {superAggressiveMode && ' (Super Aggressive)'}
-                    {aggressiveMode && ' (Aggressive)'}
+                    {currentConfig.super_aggressive_mode && ' (Super Aggressive)'}
+                    {currentConfig.aggressive_mode && ' (Aggressive)'}
                 </h3>
 
                 {/* Enhanced Live Statistics Panel */}
@@ -828,7 +840,7 @@ function BotControls({ settings, botStatus, onRefresh }) {
                             <span className="stat-label">Avg Loss</span>
                             <span className="stat-value loss">${liveStats.avgLoss.toFixed(2)}</span>
                         </div>
-                        {(aggressiveMode || superAggressiveMode) && performanceStats.total_pnl !== undefined && (
+                        {(currentConfig.aggressive_mode || currentConfig.super_aggressive_mode) && performanceStats.total_pnl !== undefined && (
                             <div className="stat-item">
                                 <span className="stat-label">Session P&L</span>
                                 <span className={`stat-value ${performanceStats.total_pnl >= 0 ? 'profit' : 'loss'}`}>
@@ -844,34 +856,34 @@ function BotControls({ settings, botStatus, onRefresh }) {
                         <div className="strategy-item">
                             <span className="strategy-label">Strategy:</span>
                             <span className="strategy-value">
-                                {(aggressiveMode || superAggressiveMode) ? 'Aggressive EMA Crossover' :
-                                    settings.strategy_type === 'custom' ? 'Custom Strategy' : 'Moving Average Crossover'}
+                                {(currentConfig.aggressive_mode || currentConfig.super_aggressive_mode) ? 'Aggressive EMA Crossover' :
+                                    currentConfig.strategy_type === 'custom' ? 'Custom Strategy' : 'Moving Average Crossover'}
                             </span>
                         </div>
                         <div className="strategy-item">
                             <span className="strategy-label">Timeframe:</span>
                             <span className="strategy-value">
-                                {(aggressiveMode || superAggressiveMode) ? '5-minute candles' : '1-hour candles'}
+                                {(currentConfig.aggressive_mode || currentConfig.super_aggressive_mode) ? '5-minute candles' : '1-hour candles'}
                             </span>
                         </div>
                         <div className="strategy-item">
                             <span className="strategy-label">Check Frequency:</span>
                             <span className="strategy-value">
-                                {superAggressiveMode ? 'Every 15 seconds' :
-                                    aggressiveMode ? 'Every 5 seconds' : 'Every 10 seconds'}
+                                {currentConfig.super_aggressive_mode ? 'Every 15 seconds' :
+                                    currentConfig.aggressive_mode ? 'Every 5 seconds' : 'Every 10 seconds'}
                             </span>
                         </div>
                         <div className="strategy-item">
                             <span className="strategy-label">Cooldown:</span>
                             <span className="strategy-value">
-                                {superAggressiveMode ? '30 seconds per pair' :
-                                    aggressiveMode ? '30 seconds' : '5 minutes'}
+                                {currentConfig.super_aggressive_mode ? '30 seconds per pair' :
+                                    currentConfig.aggressive_mode ? '30 seconds' : '5 minutes'}
                             </span>
                         </div>
-                        {(multiPairMode || superAggressiveMode) && (
+                        {(currentConfig.multi_pair_mode || currentConfig.super_aggressive_mode) && (
                             <div className="strategy-item">
                                 <span className="strategy-label">Pairs:</span>
-                                <span className="strategy-value">{selectedPairs.length} symbols</span>
+                                <span className="strategy-value">{currentConfig.symbols.length} symbols</span>
                             </div>
                         )}
                     </div>
@@ -942,7 +954,7 @@ function BotControls({ settings, botStatus, onRefresh }) {
                 <div className="strategy-legend">
                     <div className="legend-item">
                         <span className="legend-line price-line"></span>
-                        <span>{(multiPairMode ? selectedPairs[0] : settings.symbol)?.split('/')[0] || 'Crypto'} Price</span>
+                        <span>{(currentConfig.multi_pair_mode ? currentConfig.symbols[0] : currentConfig.symbol)?.split('/')[0] || 'Crypto'} Price</span>
                     </div>
                     <div className="legend-item">
                         <span className="legend-line fast-ma-line"></span>
@@ -969,64 +981,64 @@ function BotControls({ settings, botStatus, onRefresh }) {
                 <div className="config-grid">
                     <div className="config-item">
                         <span className="config-label">Exchange</span>
-                        <span className="config-value">{settings.exchange?.toUpperCase() || 'NOT SET'}</span>
+                        <span className="config-value">{currentConfig.exchange?.toUpperCase() || 'NOT SET'}</span>
                     </div>
                     <div className="config-item">
-                        <span className="config-label">Trading Pair{multiPairMode ? 's' : ''}</span>
+                        <span className="config-label">Trading Pair{currentConfig.multi_pair_mode ? 's' : ''}</span>
                         <span className="config-value">
-                            {multiPairMode ? selectedPairs.join(', ') : (settings.symbol || 'NOT SET')}
+                            {currentConfig.multi_pair_mode ? currentConfig.symbols.join(', ') : (currentConfig.symbol || 'NOT SET')}
                         </span>
                     </div>
                     <div className="config-item">
                         <span className="config-label">Trade Amount</span>
-                        <span className="config-value">${tradeAmount}</span>
+                        <span className="config-value">${currentConfig.trade_amount}</span>
                     </div>
                     <div className="config-item">
                         <span className="config-label">Speed Mode</span>
                         <span className="config-value">
-                            {superAggressiveMode ? 'Super Aggressive (Maximum)' :
-                                aggressiveMode ? 'Aggressive (Fast)' : 'Conservative (Original)'}
+                            {currentConfig.super_aggressive_mode ? 'Super Aggressive (Maximum)' :
+                                currentConfig.aggressive_mode ? 'Aggressive (Fast)' : 'Conservative (Original)'}
                         </span>
                     </div>
                     <div className="config-item">
                         <span className="config-label">Strategy Type</span>
                         <span className="config-value">
-                            {(aggressiveMode || superAggressiveMode) ? 'Aggressive EMA Crossover' :
-                                settings.strategy_type === 'custom' ? 'Custom Strategy' : 'Default MA Crossover'}
+                            {(currentConfig.aggressive_mode || currentConfig.super_aggressive_mode) ? 'Aggressive EMA Crossover' :
+                                currentConfig.strategy_type === 'custom' ? 'Custom Strategy' : 'Default MA Crossover'}
                         </span>
                     </div>
                     <div className="config-item">
                         <span className="config-label">Risk per Trade</span>
                         <span className="config-value">
-                            {multiPairMode ? `${Math.max((settings.risk / selectedPairs.length), 0.3).toFixed(2)}% per pair` : `${settings.risk}%`}
+                            {currentConfig.multi_pair_mode ? `${Math.max((currentConfig.risk / currentConfig.symbols.length), 0.3).toFixed(2)}% per pair` : `${currentConfig.risk}%`}
                         </span>
                     </div>
                     <div className="config-item">
                         <span className="config-label">Stop Loss</span>
-                        <span className="config-value">{settings.stop_loss}%</span>
+                        <span className="config-value">{currentConfig.stop_loss}%</span>
                     </div>
                     <div className="config-item">
                         <span className="config-label">Take Profit</span>
-                        <span className="config-value">{settings.take_profit}%</span>
+                        <span className="config-value">{currentConfig.take_profit}%</span>
                     </div>
                     <div className="config-item">
                         <span className="config-label">Execution Speed</span>
                         <span className="config-value">
-                            {superAggressiveMode ? 'Maximum (15s checks)' :
-                                aggressiveMode ? 'Fast (5s checks)' : 'Normal (10s checks)'}
+                            {currentConfig.super_aggressive_mode ? 'Maximum (15s checks)' :
+                                currentConfig.aggressive_mode ? 'Fast (5s checks)' : 'Normal (10s checks)'}
                         </span>
                     </div>
                     <div className="config-item">
                         <span className="config-label">Expected Trades/Day</span>
                         <span className="config-value">
-                            {superAggressiveMode ? '30-60' :
-                                aggressiveMode ? '10-25' : '3-8'}
+                            {currentConfig.super_aggressive_mode ? '30-60' :
+                                currentConfig.aggressive_mode ? '10-25' : '3-8'}
                         </span>
                     </div>
                     <div className="config-item">
                         <span className="config-label">Mode</span>
-                        <span className={`config-value ${settings.real_mode ? 'live-mode' : 'paper-mode'}`}>
-                            {settings.real_mode ? 'LIVE TRADING' : 'PAPER TRADING'}
+                        <span className={`config-value ${currentConfig.real_mode ? 'live-mode' : 'paper-mode'}`}>
+                            {currentConfig.real_mode ? 'LIVE TRADING' : 'PAPER TRADING'}
                         </span>
                     </div>
                 </div>

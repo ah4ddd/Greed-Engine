@@ -30,20 +30,87 @@ current_interface = None
 CONFIG_FILE = 'bot_config.json'
 
 def load_config():
-    """Load saved configuration"""
+    """Load saved configuration with enhanced multi-pair support"""
+    default_config = {
+        'strategy_type': 'default_ma',
+        'risk': 1.0,
+        'stop_loss': 1.0,
+        'take_profit': 3.0,
+        'symbol': 'BTC/USDT',
+        'symbols': ['BTC/USDT'],
+        'trading_mode': 'spot',
+        'leverage': 1,
+        'kill_switch_threshold': 5,
+        'multi_pair_mode': False,
+        'aggressive_mode': False,
+        'super_aggressive_mode': False,
+        'trade_amount': 1000,
+        'api_key': '',
+        'api_secret': '',
+        'exchange': 'binance',
+        'real_mode': False
+    }
+
     try:
         if os.path.exists(CONFIG_FILE):
             with open(CONFIG_FILE, 'r') as f:
-                return json.load(f)
+                saved_config = json.load(f)
+                # Merge with defaults to ensure all keys exist
+                config = {**default_config, **saved_config}
+
+                # Ensure symbols is always a list
+                if 'symbols' not in config or not isinstance(config['symbols'], list):
+                    config['symbols'] = [config.get('symbol', 'BTC/USDT')]
+
+                # If multi_pair_mode is True but symbols has only 1 item, add defaults
+                if config.get('multi_pair_mode', False) and len(config['symbols']) == 1:
+                    config['symbols'] = ['BTC/USDT', 'ETH/USDT', 'ADA/USDT']
+
+                return config
     except Exception as e:
         print(f"Error loading config: {e}")
-    return {}
+
+    return default_config
 
 def save_config(config_data):
-    """Save configuration to file"""
+    """Save enhanced configuration including all modes and symbols"""
     try:
+        # Ensure all required fields are present
+        current_config = load_config()
+
+        # Merge new data with existing config
+        updated_config = {**current_config, **config_data}
+
+        # Special handling for symbols array
+        if 'symbols' in config_data and isinstance(config_data['symbols'], list):
+            updated_config['symbols'] = config_data['symbols']
+        elif 'symbol' in config_data:
+            # If only single symbol provided, update the array as well
+            updated_config['symbols'] = [config_data['symbol']]
+            updated_config['symbol'] = config_data['symbol']
+
+        # Ensure consistency between single symbol and symbols array
+        if updated_config.get('multi_pair_mode', False):
+            if len(updated_config['symbols']) == 0:
+                updated_config['symbols'] = ['BTC/USDT', 'ETH/USDT', 'ADA/USDT']
+        else:
+            # Single pair mode - ensure symbol matches first item in symbols array
+            if updated_config['symbols'] and len(updated_config['symbols']) > 0:
+                updated_config['symbol'] = updated_config['symbols'][0]
+
+        # Validate aggressive modes
+        if updated_config.get('super_aggressive_mode', False):
+            updated_config['aggressive_mode'] = False  # Can't have both
+            updated_config['multi_pair_mode'] = True   # Force multi-pair for super aggressive
+            if len(updated_config['symbols']) < 3:
+                updated_config['symbols'].extend(['ETH/USDT', 'ADA/USDT', 'SOL/USDT'])
+                updated_config['symbols'] = list(set(updated_config['symbols']))[:8]  # Remove duplicates, max 8
+
+        print(f"Saving enhanced config: {json.dumps(updated_config, indent=2)}")
+
         with open(CONFIG_FILE, 'w') as f:
-            json.dump(config_data, f, indent=2)
+            json.dump(updated_config, f, indent=2)
+
         return True
     except Exception as e:
         print(f"Error saving config: {e}")
@@ -192,34 +259,53 @@ def get_database_stats():
         }
     })
 
-# Save configuration endpoint
+# ENHANCED: Save configuration endpoint
 @app.route('/api/save-config', methods=['POST'])
 def save_configuration():
-    """Save trading configuration"""
+    """Save enhanced trading configuration with multi-pair support"""
     try:
         config_data = request.get_json()
-        # Validate required fields
+        print(f"Received config data: {json.dumps(config_data, indent=2)}")
+
+        # Enhanced validation for required fields
         required_fields = ['strategy_type', 'risk', 'stop_loss', 'take_profit']
         for field in required_fields:
             if field not in config_data:
                 return jsonify({'error': f'Missing required field: {field}'}), 400
 
+        # Additional validation for multi-pair mode
+        if config_data.get('multi_pair_mode', False):
+            if 'symbols' not in config_data or not isinstance(config_data['symbols'], list) or len(config_data['symbols']) == 0:
+                return jsonify({'error': 'Multi-pair mode requires at least one symbol in symbols array'}), 400
+
+        if config_data.get('super_aggressive_mode', False):
+            if 'symbols' not in config_data or len(config_data['symbols']) < 3:
+                return jsonify({'error': 'Super aggressive mode requires at least 3 trading pairs'}), 400
+
         if save_config(config_data):
-            return jsonify({'message': 'Configuration saved successfully'})
+            saved_config = load_config()  # Reload to confirm
+            print(f"Config saved successfully: {json.dumps(saved_config, indent=2)}")
+            return jsonify({
+                'message': 'Enhanced configuration saved successfully',
+                'saved_config': saved_config
+            })
         else:
             return jsonify({'error': 'Failed to save configuration'}), 500
 
     except Exception as e:
+        print(f"Error in save_configuration: {e}")
         return jsonify({'error': str(e)}), 500
 
-# Load configuration endpoint
+# ENHANCED: Load configuration endpoint
 @app.route('/api/load-config', methods=['GET'])
 def load_configuration():
-    """Load saved trading configuration"""
+    """Load enhanced trading configuration with multi-pair support"""
     try:
         config = load_config()
+        print(f"Loading config: {json.dumps(config, indent=2)}")
         return jsonify(config)
     except Exception as e:
+        print(f"Error in load_configuration: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/ohlcv', methods=['GET'])
@@ -485,27 +571,41 @@ def start_bot():
     global bot_running, bot_thread, current_bot, current_interface
 
     data = request.get_json()
-    api_key = data.get('api_key', '')
-    api_secret = data.get('api_secret', '')
-    exchange = data.get('exchange', 'binance')
-    symbol = data.get('symbol')
-    if not symbol:
-        return jsonify({"error": "Trading pair (symbol) is required"}), 400
+    print(f"Received start bot request: {json.dumps(data, indent=2)}")
 
-    real_mode = data.get('real_mode', False)
-    risk = float(data.get('risk', 1.0))
-    stop_loss = float(data.get('stop_loss', 1.0))
-    take_profit = float(data.get('take_profit', 2.0))
-    strategy_type = data.get('strategy_type', 'default_ma')
-    trade_amount = data.get('trade_amount')
+    # Load config to get complete settings
+    config = load_config()
 
-    # NEW: Multi-pair mode detection
-    multi_pair_mode = data.get('multi_pair_mode', False)
-    symbols = data.get('symbols', [symbol])  # List of symbols for multi-pair
+    # Merge request data with config
+    merged_data = {**config, **data}
 
-    trading_mode = data.get('trading_mode', 'spot')
-    leverage = int(data.get('leverage', 1))
-    kill_switch_threshold = int(data.get('kill_switch_threshold', 10))
+    api_key = merged_data.get('api_key', '')
+    api_secret = merged_data.get('api_secret', '')
+    exchange = merged_data.get('exchange', 'binance')
+
+    # Determine if using multi-pair mode
+    multi_pair_mode = merged_data.get('multi_pair_mode', False)
+    symbols = merged_data.get('symbols', [])
+    symbol = merged_data.get('symbol', 'BTC/USDT')
+
+    # Ensure we have trading pairs
+    if multi_pair_mode:
+        if not symbols or len(symbols) == 0:
+            symbols = [symbol]  # Fallback to single symbol
+            multi_pair_mode = False
+    else:
+        if not symbol:
+            return jsonify({"error": "Trading pair (symbol) is required"}), 400
+
+    real_mode = merged_data.get('real_mode', False)
+    risk = float(merged_data.get('risk', 1.0))
+    stop_loss = float(merged_data.get('stop_loss', 1.0))
+    take_profit = float(merged_data.get('take_profit', 2.0))
+    strategy_type = merged_data.get('strategy_type', 'default_ma')
+    trade_amount = merged_data.get('trade_amount')
+    trading_mode = merged_data.get('trading_mode', 'spot')
+    leverage = int(merged_data.get('leverage', 1))
+    kill_switch_threshold = int(merged_data.get('kill_switch_threshold', 10))
 
     db_mode = 'live' if real_mode else 'paper'
     set_trading_mode(db_mode)
@@ -520,6 +620,7 @@ def start_bot():
 
         # Choose bot type based on mode
         if multi_pair_mode and len(symbols) > 1:
+            print(f"Starting multi-pair bot with symbols: {symbols}")
             current_bot = MultiPairTradingBot(
                 current_interface,
                 symbols,  # Pass list of symbols
@@ -533,6 +634,7 @@ def start_bot():
             bot_type = "Multi-Pair"
             symbol_info = f"{len(symbols)} pairs: {', '.join(symbols[:3])}" + ("..." if len(symbols) > 3 else "")
         else:
+            print(f"Starting single-pair bot with symbol: {symbol}")
             current_bot = TradingBot(
                 current_interface,
                 symbol,  # Single symbol
@@ -582,6 +684,7 @@ def start_bot():
         })
 
     except Exception as e:
+        print(f"Error starting bot: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/stop', methods=['POST'])
@@ -699,6 +802,14 @@ def test_binance_connection():
         return jsonify({
             "error": f"API connection failed: {str(e)}"
         }), 500
+
+@app.route("/", defaults={"path": ""})
+@app.route("/<path:path>")
+def serve(path):
+    if path != "" and os.path.exists(f"frontend/build/{path}"):
+        return send_from_directory("frontend/build", path)
+    else:
+        return send_from_directory("frontend/build", "index.html")
 
 @app.route('/api/backtest', methods=['POST'])
 def backtest():
