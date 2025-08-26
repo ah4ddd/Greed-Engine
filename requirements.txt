@@ -6,3 +6,5 @@ sqlalchemy
 flask
 flask-cors
 python-dotenv
+gunicorn
+
