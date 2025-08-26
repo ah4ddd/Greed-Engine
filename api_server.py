@@ -803,14 +803,6 @@ def test_binance_connection():
             "error": f"API connection failed: {str(e)}"
         }), 500
 
-@app.route("/", defaults={"path": ""})
-@app.route("/<path:path>")
-def serve(path):
-    if path != "" and os.path.exists(f"frontend/build/{path}"):
-        return send_from_directory("frontend/build", path)
-    else:
-        return send_from_directory("frontend/build", "index.html")
-
 @app.route('/api/backtest', methods=['POST'])
 def backtest():
     data = request.get_json()
@@ -826,6 +818,15 @@ def backtest():
 
     results = run_backtest(symbol, years, risk, stop_loss, take_profit)
     return jsonify(results)
+
+if os.path.exists("frontend/build"):
+    @app.route("/", defaults={"path": ""})
+    @app.route("/<path:path>")
+    def serve_react(path):
+        if path != "" and os.path.exists(f"frontend/build/{path}"):
+            return send_from_directory("frontend/build", path)
+        else:
+            return send_from_directory("frontend/build", "index.html")
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
