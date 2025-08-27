@@ -86,25 +86,34 @@ def save_config(config_data):
             updated_config['symbols'] = config_data['symbols']
         elif 'symbol' in config_data:
             # If only single symbol provided, update the array as well
-            updated_config['symbols'] = [config_data['symbol']]
-            updated_config['symbol'] = config_data['symbol']
+            if not updated_config.get('multi_pair_mode', False):
+                updated_config['symbols'] = [config_data['symbol']]
+            elif config_data['symbol'] not in updated_config.get('symbols', []):
+                # Add to front of existing symbols
+                existing_symbols = updated_config.get('symbols', [])
+                updated_config['symbols'] = [config_data['symbol']] + [s for s in existing_symbols if s != config_data['symbol']]
 
         # Ensure consistency between single symbol and symbols array
         if updated_config.get('multi_pair_mode', False):
-            if len(updated_config['symbols']) == 0:
+            if not updated_config.get('symbols') or len(updated_config['symbols']) == 0:
                 updated_config['symbols'] = ['BTC/USDT', 'ETH/USDT', 'ADA/USDT']
+            # Set symbol to first in array
+            updated_config['symbol'] = updated_config['symbols'][0]
         else:
             # Single pair mode - ensure symbol matches first item in symbols array
-            if updated_config['symbols'] and len(updated_config['symbols']) > 0:
+            if updated_config.get('symbols') and len(updated_config['symbols']) > 0:
                 updated_config['symbol'] = updated_config['symbols'][0]
+            elif updated_config.get('symbol'):
+                updated_config['symbols'] = [updated_config['symbol']]
 
         # Validate aggressive modes
         if updated_config.get('super_aggressive_mode', False):
             updated_config['aggressive_mode'] = False  # Can't have both
             updated_config['multi_pair_mode'] = True   # Force multi-pair for super aggressive
-            if len(updated_config['symbols']) < 3:
-                updated_config['symbols'].extend(['ETH/USDT', 'ADA/USDT', 'SOL/USDT'])
-                updated_config['symbols'] = list(set(updated_config['symbols']))[:8]  # Remove duplicates, max 8
+            if len(updated_config.get('symbols', [])) < 3:
+                default_symbols = ['BTC/USDT', 'ETH/USDT', 'ADA/USDT', 'SOL/USDT']
+                updated_config['symbols'].extend([s for s in default_symbols if s not in updated_config['symbols']])
+                updated_config['symbols'] = updated_config['symbols'][:8]  # Max 8
 
         print(f"Saving enhanced config: {json.dumps(updated_config, indent=2)}")
 
@@ -134,7 +143,19 @@ def get_trades():
     trades = get_trade_history()
     return jsonify(trades)
 
-# NEW: Bot Performance Endpoint (FIXED)
+# FIXED: Add the missing load-config endpoint
+@app.route('/api/load-config', methods=['GET'])
+def load_configuration():
+    """Load current trading configuration"""
+    try:
+        config = load_config()
+        print(f"Loading config: {json.dumps(config, indent=2)}")
+        return jsonify(config)
+    except Exception as e:
+        print(f"Error in load_configuration: {e}")
+        return jsonify({'error': str(e)}), 500
+
+# Bot Performance Endpoint
 @app.route('/api/bot-performance', methods=['GET'])
 def get_bot_performance():
     """Get current bot performance statistics for aggressive modes"""
@@ -193,7 +214,7 @@ def get_bot_performance():
             'open_positions': 0
         })
 
-# NEW: Trading Mode Management
+# Trading Mode Management
 @app.route('/api/trading-mode', methods=['GET'])
 def get_current_trading_mode():
     """Get current trading mode"""
@@ -259,19 +280,31 @@ def get_database_stats():
         }
     })
 
-# ENHANCED: Save configuration endpoint
+# Save configuration endpoint
 @app.route('/api/save-config', methods=['POST'])
 def save_configuration():
     """Save enhanced trading configuration with multi-pair support"""
     try:
         config_data = request.get_json()
-        print(f"Received config data: {json.dumps(config_data, indent=2)}")
+        print(f"Received config data for saving: {json.dumps(config_data, indent=2)}")
 
         # Enhanced validation for required fields
         required_fields = ['strategy_type', 'risk', 'stop_loss', 'take_profit']
         for field in required_fields:
             if field not in config_data:
                 return jsonify({'error': f'Missing required field: {field}'}), 400
+
+        # Ensure symbol and symbols consistency
+        if 'symbol' in config_data:
+            if not config_data.get('multi_pair_mode', False):
+                # Single pair mode - ensure symbols array matches
+                config_data['symbols'] = [config_data['symbol']]
+            elif 'symbols' not in config_data or not isinstance(config_data['symbols'], list):
+                # Multi-pair mode but no symbols array - create one
+                config_data['symbols'] = [config_data['symbol']]
+            elif config_data['symbol'] not in config_data['symbols']:
+                # Add symbol to front of symbols array
+                config_data['symbols'] = [config_data['symbol']] + config_data['symbols']
 
         # Additional validation for multi-pair mode
         if config_data.get('multi_pair_mode', False):
@@ -296,25 +329,51 @@ def save_configuration():
         print(f"Error in save_configuration: {e}")
         return jsonify({'error': str(e)}), 500
 
-# ENHANCED: Load configuration endpoint
-@app.route('/api/load-config', methods=['GET'])
-def load_configuration():
-    """Load enhanced trading configuration with multi-pair support"""
+@app.route('/api/current-config', methods=['GET'])
+def get_current_config():
+    """Get current configuration - same as load-config but with different response format"""
     try:
         config = load_config()
-        print(f"Loading config: {json.dumps(config, indent=2)}")
-        return jsonify(config)
+        print(f"Current config requested: {json.dumps(config, indent=2)}")
+        return jsonify({
+            'success': True,
+            'config': config
+        })
     except Exception as e:
-        print(f"Error in load_configuration: {e}")
-        return jsonify({'error': str(e)}), 500
+        print(f"Error in get_current_config: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'config': {
+                'strategy_type': 'default_ma',
+                'risk': 1.0,
+                'stop_loss': 1.0,
+                'take_profit': 3.0,
+                'symbol': 'BTC/USDT',
+                'symbols': ['BTC/USDT'],
+                'trading_mode': 'spot',
+                'leverage': 1,
+                'kill_switch_threshold': 5,
+                'trade_amount': 1000,
+                'multi_pair_mode': False,
+                'aggressive_mode': False,
+                'super_aggressive_mode': False,
+                'api_key': '',
+                'api_secret': '',
+                'exchange': 'binance',
+                'real_mode': False
+            }
+        }), 500
 
 @app.route('/api/ohlcv', methods=['GET'])
 def get_ohlcv():
     """Get candlestick data for charts"""
-    # FIXED: No default fallback to BTC/USDT - require symbol parameter
     symbol = request.args.get('symbol')
     if not symbol:
-        return jsonify({'error': 'Symbol parameter is required'}), 400
+        # Load current symbol from config instead of hardcoding
+        config = load_config()
+        symbol = config.get('symbol', 'BTC/USDT')
+        print(f"No symbol provided, using config symbol: {symbol}")
 
     timeframe = request.args.get('timeframe', '1m')
     limit = int(request.args.get('limit', 100))
@@ -343,16 +402,18 @@ def get_ohlcv():
             'data': ohlcv_data
         })
     except Exception as e:
+        print(f"Error fetching OHLCV data for {symbol}: {str(e)}")
         return jsonify({'error': str(e)}), 500
-
-# NEW AGGRESSIVE TRADING ENDPOINTS ADDED BELOW
 
 @app.route('/api/ohlcv-fast', methods=['GET'])
 def get_fast_ohlcv():
     """Get 5-minute candlestick data for fast trading"""
     symbol = request.args.get('symbol')
     if not symbol:
-        return jsonify({'error': 'Symbol parameter is required'}), 400
+        # Load current symbol from config
+        config = load_config()
+        symbol = config.get('symbol', 'BTC/USDT')
+        print(f"No symbol provided for fast OHLCV, using config symbol: {symbol}")
 
     limit = int(request.args.get('limit', 200))  # More data for analysis
     trading_mode = request.args.get('trading_mode', 'spot')
@@ -380,6 +441,7 @@ def get_fast_ohlcv():
             'message': f'Fast trading data for {symbol} (5-min candles)'
         })
     except Exception as e:
+        print(f"Error fetching fast OHLCV data for {symbol}: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/start-fast', methods=['POST'])
@@ -545,10 +607,12 @@ def start_super_aggressive_bot():
 @app.route('/api/current-price', methods=['GET'])
 def get_current_price():
     """Get current price for a symbol"""
-    # FIXED: No default fallback to BTC/USDT - require symbol parameter
     symbol = request.args.get('symbol')
     if not symbol:
-        return jsonify({'error': 'Symbol parameter is required'}), 400
+        # Load current symbol from config instead of hardcoding
+        config = load_config()
+        symbol = config.get('symbol', 'BTC/USDT')
+        print(f"No symbol provided for current price, using config symbol: {symbol}")
 
     trading_mode = request.args.get('trading_mode', 'spot')
 
@@ -564,6 +628,7 @@ def get_current_price():
             'trading_mode': trading_mode
         })
     except Exception as e:
+        print(f"Error fetching current price for {symbol}: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/start', methods=['POST'])
@@ -701,7 +766,7 @@ def bot_status():
         "trading_mode": get_trading_mode()
     }
 
-    # NEW: Add kill switch status info
+    # Add kill switch status info
     if current_bot:
         status.update({
             "kill_switch_active": current_bot.is_kill_switch_active(),
@@ -712,7 +777,7 @@ def bot_status():
 
     return jsonify(status)
 
-# NEW: Kill switch control endpoints
+# Kill switch control endpoints
 @app.route('/api/kill-switch-status', methods=['GET'])
 def get_kill_switch_status():
     """Get current kill switch status"""
@@ -739,7 +804,7 @@ def reset_kill_switch():
     current_bot.reset_kill_switch()
     return jsonify({'message': 'Kill switch reset - trading can resume'})
 
-# Fixed current-position endpoint
+# Current position endpoint
 @app.route('/api/current-position', methods=['GET'])
 def get_current_position():
     """Return the bot's current trading position"""
@@ -788,15 +853,18 @@ def test_binance_connection():
         # Try to fetch account balance (doesn't cost money)
         balance = test_interface.get_balance('USDT')
 
-        # Try to fetch current price (doesn't cost money) - FIXED: Use BTC/USDT only for connection test
-        df = test_interface.fetch_ohlcv('BTC/USDT', '1m', 1)
+        # Try to fetch current price (doesn't cost money) - Use current config symbol for test
+        config = load_config()
+        test_symbol = config.get('symbol', 'BTC/USDT')
+        df = test_interface.fetch_ohlcv(test_symbol, '1m', 1)
         current_price = float(df['close'].iloc[-1])
 
         return jsonify({
             "success": True,
             "message": f"API keys work! Connected to {exchange.capitalize()} successfully",
             "your_usdt_balance": balance['free'],
-            "current_btc_price": current_price
+            "current_price": current_price,
+            "test_symbol": test_symbol
         })
     except Exception as e:
         return jsonify({
@@ -806,10 +874,12 @@ def test_binance_connection():
 @app.route('/api/backtest', methods=['POST'])
 def backtest():
     data = request.get_json()
-    # FIXED: No default fallback - require symbol to be provided
     symbol = data.get('symbol')
     if not symbol:
-        return jsonify({'error': 'Symbol parameter is required'}), 400
+        # Load current symbol from config instead of requiring it
+        config = load_config()
+        symbol = config.get('symbol', 'BTC/USDT')
+        print(f"No symbol provided for backtest, using config symbol: {symbol}")
 
     years = int(data.get('years', 2))
     risk = float(data.get('risk', 1.0))
@@ -819,6 +889,49 @@ def backtest():
     results = run_backtest(symbol, years, risk, stop_loss, take_profit)
     return jsonify(results)
 
+# Update single symbol endpoint
+@app.route('/api/update-symbol', methods=['POST'])
+def update_symbol():
+    """Update the current trading symbol and save to config"""
+    try:
+        data = request.get_json()
+        new_symbol = data.get('symbol')
+        if not new_symbol:
+            return jsonify({'error': 'Symbol is required'}), 400
+
+        print(f"Updating symbol to: {new_symbol}")
+
+        # Load current config
+        config = load_config()
+
+        # Update symbol and symbols array
+        config['symbol'] = new_symbol
+
+        # If not in multi-pair mode, update symbols array to match
+        if not config.get('multi_pair_mode', False):
+            config['symbols'] = [new_symbol]
+        elif new_symbol not in config['symbols']:
+            # In multi-pair mode, add to front if not present
+            config['symbols'] = [new_symbol] + [s for s in config['symbols'] if s != new_symbol]
+
+        print(f"Updated config - symbol: {config['symbol']}, symbols: {config['symbols']}")
+
+        # Save updated config
+        if save_config(config):
+            print(f"Symbol successfully updated to {new_symbol}")
+            return jsonify({
+                'success': True,
+                'message': f'Symbol updated to {new_symbol}',
+                'config': config
+            })
+        else:
+            return jsonify({'error': 'Failed to save updated symbol'}), 500
+
+    except Exception as e:
+        print(f"Error updating symbol: {e}")
+        return jsonify({'error': str(e)}), 500
+
+# Serve React frontend (if build exists)
 if os.path.exists("frontend/build"):
     @app.route("/", defaults={"path": ""})
     @app.route("/<path:path>")

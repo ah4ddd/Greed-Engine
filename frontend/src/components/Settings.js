@@ -2,28 +2,20 @@ import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 
 function Settings({ onSettingsChange }) {
-    // Enhanced state with all configuration options
     const [config, setConfig] = useState({
-        // Basic trading settings
         strategy_type: 'default_ma',
         risk: 1.0,
         stop_loss: 1.0,
         take_profit: 3.0,
         symbol: 'BTC/USDT',
         symbols: ['BTC/USDT'],
-
-        // Trading modes
         trading_mode: 'spot',
         leverage: 1,
         kill_switch_threshold: 5,
         trade_amount: 1000,
-
-        // Enhanced modes
         multi_pair_mode: false,
         aggressive_mode: false,
         super_aggressive_mode: false,
-
-        // API settings
         api_key: '',
         api_secret: '',
         exchange: 'binance',
@@ -32,10 +24,11 @@ function Settings({ onSettingsChange }) {
 
     const [message, setMessage] = useState('');
     const [loading, setLoading] = useState(false);
+    const [saving, setSaving] = useState(false);
     const [connectionStatus, setConnectionStatus] = useState('');
     const [testingConnection, setTestingConnection] = useState(false);
+    const [configLoaded, setConfigLoaded] = useState(false);
 
-    // Popular trading pairs
     const popularPairs = [
         'BTC/USDT', 'ETH/USDT', 'ADA/USDT', 'SOL/USDT', 'MATIC/USDT',
         'DOT/USDT', 'AVAX/USDT', 'LINK/USDT', 'UNI/USDT', 'ATOM/USDT',
@@ -43,61 +36,100 @@ function Settings({ onSettingsChange }) {
     ];
 
     const loadConfiguration = useCallback(async () => {
+        if (loading || saving) return; // Prevent loading during save operations
+
         try {
+            setLoading(true);
+            setMessage('');
+            console.log('Loading configuration...');
+
             const response = await axios.get('/api/load-config');
             const loadedConfig = response.data;
 
-            console.log('Loaded config:', loadedConfig);
+            console.log('Raw loaded config:', loadedConfig);
 
-            // Ensure symbols is always an array - fix the self-assignment issue
-            if (loadedConfig.symbols && Array.isArray(loadedConfig.symbols)) {
-                // loadedConfig.symbols is already an array, keep it as is
-            } else if (loadedConfig.symbol) {
-                loadedConfig.symbols = [loadedConfig.symbol];
-            } else {
-                loadedConfig.symbols = ['BTC/USDT'];
+            // Ensure symbols is always an array
+            if (!loadedConfig.symbols || !Array.isArray(loadedConfig.symbols)) {
+                if (loadedConfig.symbol) {
+                    loadedConfig.symbols = [loadedConfig.symbol];
+                } else {
+                    loadedConfig.symbols = ['BTC/USDT'];
+                    loadedConfig.symbol = 'BTC/USDT';
+                }
             }
 
-            setConfig(loadedConfig);
+            // Ensure symbol is set from symbols array if missing
+            if (!loadedConfig.symbol && loadedConfig.symbols.length > 0) {
+                loadedConfig.symbol = loadedConfig.symbols[0];
+            }
 
-            // Notify parent component
-            if (onSettingsChange) {
+            console.log('Processed config:', loadedConfig);
+            setConfig(loadedConfig);
+            setConfigLoaded(true);
+
+            // Only notify parent component if this is the initial load or a manual reload
+            if (onSettingsChange && !configLoaded) {
                 onSettingsChange(loadedConfig);
             }
 
             setMessage('Configuration loaded successfully');
+
+            // Clear success message after 3 seconds
+            setTimeout(() => setMessage(''), 3000);
+
         } catch (error) {
             console.error('Error loading configuration:', error);
             setMessage('Error loading configuration: ' + (error.response?.data?.error || error.message));
+        } finally {
+            setLoading(false);
         }
-    }, [onSettingsChange]);
+    }, [loading, saving, onSettingsChange, configLoaded]);
 
-    // Load configuration on component mount
+    // Load config only once when component mounts
     useEffect(() => {
-        loadConfiguration();
-    }, [loadConfiguration]);
+        if (!configLoaded) {
+            loadConfiguration();
+        }
+    }, [configLoaded, loadConfiguration]);
 
     const saveConfiguration = async () => {
-        setLoading(true);
+        if (saving || loading) return; // Prevent multiple saves
+
+        setSaving(true);
+        setMessage('');
+
         try {
-            console.log('Saving config:', config);
+            console.log('Saving configuration:', config);
 
-            const response = await axios.post('/api/save-config', config);
+            // Validate configuration before saving
+            const configToSave = { ...config };
 
+            // Ensure symbols array is properly formatted
+            if (!configToSave.multi_pair_mode) {
+                configToSave.symbols = [configToSave.symbol];
+            }
+
+            console.log('Config to save:', configToSave);
+
+            const response = await axios.post('/api/save-config', configToSave);
             console.log('Save response:', response.data);
 
-            setMessage('Configuration saved successfully! Your settings have been updated.');
+            setMessage('Configuration saved successfully!');
 
-            // Notify parent component with updated config
+            // Notify parent component of changes
             if (onSettingsChange) {
-                onSettingsChange(config);
+                onSettingsChange(configToSave);
             }
+
+            // Clear success message after 3 seconds
+            setTimeout(() => setMessage(''), 3000);
 
         } catch (error) {
             console.error('Error saving configuration:', error);
             setMessage('Error saving configuration: ' + (error.response?.data?.error || error.message));
+        } finally {
+            setSaving(false);
         }
-        setLoading(false);
     };
 
     const testConnection = async () => {
@@ -121,19 +153,21 @@ function Settings({ onSettingsChange }) {
             }
         } catch (error) {
             setConnectionStatus(`❌ ${error.response?.data?.error || error.message}`);
+        } finally {
+            setTestingConnection(false);
         }
-        setTestingConnection(false);
     };
 
-    // Handle input changes
     const handleInputChange = (field, value) => {
-        const updatedConfig = { ...config, [field]: value };
+        console.log(`Changing ${field} to:`, value);
 
-        // Special handling for mode changes
+        const updatedConfig = { ...config };
+        updatedConfig[field] = value;
+
+        // Handle mode changes
         if (field === 'super_aggressive_mode' && value) {
             updatedConfig.aggressive_mode = false;
             updatedConfig.multi_pair_mode = true;
-            // Ensure at least 3 pairs for super aggressive
             if (updatedConfig.symbols.length < 3) {
                 updatedConfig.symbols = ['BTC/USDT', 'ETH/USDT', 'ADA/USDT'];
             }
@@ -141,30 +175,33 @@ function Settings({ onSettingsChange }) {
             updatedConfig.super_aggressive_mode = false;
         } else if (field === 'multi_pair_mode' && !value) {
             updatedConfig.super_aggressive_mode = false;
-            // Keep first symbol as primary
-            if (updatedConfig.symbols.length > 0) {
-                updatedConfig.symbol = updatedConfig.symbols[0];
+            // Keep current symbol, ensure it's in symbols array
+            if (!updatedConfig.symbols.includes(updatedConfig.symbol)) {
+                updatedConfig.symbols = [updatedConfig.symbol];
             }
         }
 
-        // Update symbol when symbols array changes
+        // Handle symbol changes
+        if (field === 'symbol') {
+            console.log('Symbol field changed to:', value);
+            if (!updatedConfig.multi_pair_mode) {
+                // Single pair mode - update symbols array to match
+                updatedConfig.symbols = [value];
+            } else if (!updatedConfig.symbols.includes(value)) {
+                // Multi pair mode - add to front if not present
+                updatedConfig.symbols = [value, ...updatedConfig.symbols];
+            }
+        }
+
+        // Handle symbols array changes
         if (field === 'symbols' && Array.isArray(value) && value.length > 0) {
             updatedConfig.symbol = value[0]; // Set first symbol as primary
         }
 
-        // Update symbols array when single symbol changes
-        if (field === 'symbol') {
-            if (!updatedConfig.multi_pair_mode) {
-                updatedConfig.symbols = [value];
-            } else if (!updatedConfig.symbols.includes(value)) {
-                updatedConfig.symbols = [value, ...updatedConfig.symbols.slice(1)];
-            }
-        }
-
+        console.log('Updated config:', updatedConfig);
         setConfig(updatedConfig);
     };
 
-    // Multi-pair management functions
     const addTradingPair = (pair) => {
         if (!config.symbols.includes(pair) && config.symbols.length < (config.super_aggressive_mode ? 15 : 8)) {
             const newSymbols = [...config.symbols, pair];
@@ -175,13 +212,27 @@ function Settings({ onSettingsChange }) {
     const removeTradingPair = (pair) => {
         if (config.symbols.length > 1) {
             const newSymbols = config.symbols.filter(s => s !== pair);
-            handleInputChange('symbols', newSymbols);
+            // If removing the primary symbol, set the first remaining as primary
+            if (pair === config.symbol && newSymbols.length > 0) {
+                const updatedConfig = { ...config };
+                updatedConfig.symbols = newSymbols;
+                updatedConfig.symbol = newSymbols[0];
+                setConfig(updatedConfig);
+            } else {
+                handleInputChange('symbols', newSymbols);
+            }
         }
     };
 
     return (
         <div className="settings">
             <h2>Trading Configuration</h2>
+
+            {message && (
+                <div className={`message ${message.includes('Error') ? 'error' : 'success'}`}>
+                    {message}
+                </div>
+            )}
 
             {/* Trading Mode Selection */}
             <div className="settings-section">
@@ -197,9 +248,11 @@ function Settings({ onSettingsChange }) {
                                 handleInputChange('super_aggressive_mode', false);
                             }}
                         />
-                        <span className="mode-title">Conservative (Original)</span>
-                        <div className="mode-description">
-                            1-hour candles • 5-min cooldown • 3-8 trades/day • Safe & steady
+                        <div>
+                            <span className="mode-title">Conservative (Original)</span>
+                            <div className="mode-description">
+                                1-hour candles • 5-min cooldown • 3-8 trades/day • Safe & steady
+                            </div>
                         </div>
                     </label>
 
@@ -210,9 +263,11 @@ function Settings({ onSettingsChange }) {
                             checked={config.aggressive_mode}
                             onChange={() => handleInputChange('aggressive_mode', true)}
                         />
-                        <span className="mode-title">⚡ Aggressive (Fast)</span>
-                        <div className="mode-description">
-                            5-min candles • 30-sec cooldown • 10-25 trades/day • Higher frequency
+                        <div>
+                            <span className="mode-title">⚡ Aggressive (Fast)</span>
+                            <div className="mode-description">
+                                5-min candles • 30-sec cooldown • 10-25 trades/day • Higher frequency
+                            </div>
                         </div>
                     </label>
 
@@ -223,9 +278,11 @@ function Settings({ onSettingsChange }) {
                             checked={config.super_aggressive_mode}
                             onChange={() => handleInputChange('super_aggressive_mode', true)}
                         />
-                        <span className="mode-title">🚀 Super Aggressive (Maximum)</span>
-                        <div className="mode-description">
-                            5-min candles • 15-sec checks • 30-60 trades/day • Multiple pairs required
+                        <div>
+                            <span className="mode-title">🚀 Super Aggressive (Maximum)</span>
+                            <div className="mode-description">
+                                5-min candles • 15-sec checks • 30-60 trades/day • Multiple pairs required
+                            </div>
                         </div>
                     </label>
                 </div>
@@ -249,13 +306,15 @@ function Settings({ onSettingsChange }) {
                         <div className="selected-pairs">
                             <h4>Selected Trading Pairs ({config.symbols.length}/{config.super_aggressive_mode ? 15 : 8})</h4>
                             <div className="pairs-list">
-                                {config.symbols.map(pair => (
-                                    <div key={pair} className="pair-tag">
+                                {config.symbols.map((pair, index) => (
+                                    <div key={pair} className={`pair-tag ${index === 0 ? 'primary' : ''}`}>
                                         <span>{pair}</span>
+                                        {index === 0 && <small>(Primary)</small>}
                                         {config.symbols.length > 1 && (
                                             <button
                                                 onClick={() => removeTradingPair(pair)}
                                                 className="remove-btn"
+                                                title="Remove pair"
                                             >
                                                 ×
                                             </button>
@@ -302,12 +361,16 @@ function Settings({ onSettingsChange }) {
                         <label>Primary Trading Pair</label>
                         <select
                             value={config.symbol}
-                            onChange={(e) => handleInputChange('symbol', e.target.value)}
+                            onChange={(e) => {
+                                console.log('Select changed to:', e.target.value);
+                                handleInputChange('symbol', e.target.value);
+                            }}
                         >
                             {popularPairs.map(pair => (
                                 <option key={pair} value={pair}>{pair}</option>
                             ))}
                         </select>
+                        <small>Current: {config.symbol}</small>
                     </div>
                 )}
 
@@ -317,7 +380,6 @@ function Settings({ onSettingsChange }) {
                         <select
                             value={config.strategy_type}
                             onChange={(e) => handleInputChange('strategy_type', e.target.value)}
-                            disabled={config.aggressive_mode || config.super_aggressive_mode}
                         >
                             <option value="default_ma">Default MA Crossover</option>
                             <option value="custom">Custom Strategy</option>
@@ -518,75 +580,100 @@ function Settings({ onSettingsChange }) {
             {/* Current Configuration Summary */}
             <div className="settings-section">
                 <h3>Configuration Summary</h3>
-                <div className="config-summary">
-                    <div className="summary-item">
-                        <span>Mode:</span>
-                        <span>
-                            {config.super_aggressive_mode ? '🚀 Super Aggressive' :
-                                config.aggressive_mode ? '⚡ Aggressive' : 'Conservative'}
-                        </span>
+                {(loading || saving) ? (
+                    <div className="config-loading">
+                        <div className="spinner"></div>
+                        <span>{saving ? 'Saving configuration...' : 'Loading configuration...'}</span>
                     </div>
-                    <div className="summary-item">
-                        <span>Trading Pairs:</span>
-                        <span>
-                            {config.multi_pair_mode ?
-                                `${config.symbols.length} pairs (${config.symbols.slice(0, 3).join(', ')}${config.symbols.length > 3 ? '...' : ''})` :
-                                config.symbol
-                            }
-                        </span>
+                ) : (
+                    <div className="config-summary">
+                        <div className="summary-item">
+                            <span>Mode:</span>
+                            <span>
+                                {config.super_aggressive_mode ? '🚀 Super Aggressive' :
+                                    config.aggressive_mode ? '⚡ Aggressive' : 'Conservative'}
+                            </span>
+                        </div>
+                        <div className="summary-item">
+                            <span>Trading Pairs:</span>
+                            <span>
+                                {config.multi_pair_mode ?
+                                    `${config.symbols.length} pairs (${config.symbols.slice(0, 3).join(', ')}${config.symbols.length > 3 ? '...' : ''})` :
+                                    config.symbol
+                                }
+                            </span>
+                        </div>
+                        <div className="summary-item">
+                            <span>Expected Frequency:</span>
+                            <span>
+                                {config.super_aggressive_mode ? '30-60 trades/day' :
+                                    config.aggressive_mode ? '10-25 trades/day' : '3-8 trades/day'}
+                            </span>
+                        </div>
+                        <div className="summary-item">
+                            <span>Risk per Trade:</span>
+                            <span>
+                                {config.multi_pair_mode ?
+                                    `${(config.risk / config.symbols.length).toFixed(2)}% per pair` :
+                                    `${config.risk}%`
+                                }
+                            </span>
+                        </div>
+                        <div className="summary-item">
+                            <span>Trade Amount:</span>
+                            <span>${config.trade_amount}</span>
+                        </div>
                     </div>
-                    <div className="summary-item">
-                        <span>Expected Frequency:</span>
-                        <span>
-                            {config.super_aggressive_mode ? '30-60 trades/day' :
-                                config.aggressive_mode ? '10-25 trades/day' : '3-8 trades/day'}
-                        </span>
-                    </div>
-                    <div className="summary-item">
-                        <span>Risk per Trade:</span>
-                        <span>
-                            {config.multi_pair_mode ?
-                                `${(config.risk / config.symbols.length).toFixed(2)}% per pair` :
-                                `${config.risk}%`
-                            }
-                        </span>
-                    </div>
-                    <div className="summary-item">
-                        <span>Trade Amount:</span>
-                        <span>${config.trade_amount}</span>
-                    </div>
-                </div>
+                )}
             </div>
 
             {/* Action Buttons */}
             <div className="settings-actions">
                 <button
                     onClick={saveConfiguration}
-                    disabled={loading}
+                    disabled={loading || saving}
                     className="btn btn-primary save-btn"
                 >
-                    {loading ? 'Saving...' : 'Save Configuration'}
+                    {saving ? 'Saving...' : 'Save Configuration'}
                 </button>
 
                 <button
-                    onClick={loadConfiguration}
+                    onClick={() => {
+                        setConfigLoaded(false);
+                        loadConfiguration();
+                    }}
                     className="btn btn-secondary"
+                    disabled={loading || saving}
                 >
-                    Reload Configuration
+                    {loading ? 'Loading...' : 'Reload Configuration'}
                 </button>
             </div>
-
-            {message && (
-                <div className={`message ${message.includes('Error') ? 'error' : 'success'}`}>
-                    {message}
-                </div>
-            )}
 
             <style jsx>{`
                 .settings {
                     max-width: 800px;
                     margin: 0 auto;
                     padding: 20px;
+                }
+
+                .message {
+                    margin-bottom: 20px;
+                    padding: 15px;
+                    border-radius: 6px;
+                    font-size: 14px;
+                    font-weight: bold;
+                }
+
+                .message.success {
+                    background: #d4edda;
+                    color: #155724;
+                    border: 1px solid #c3e6cb;
+                }
+
+                .message.error {
+                    background: #f8d7da;
+                    color: #721c24;
+                    border: 1px solid #f5c6cb;
                 }
 
                 .settings-section {
@@ -635,6 +722,7 @@ function Settings({ onSettingsChange }) {
 
                 .mode-option input[type="radio"] {
                     margin-top: 2px;
+                    min-width: 16px;
                 }
 
                 .mode-title {
@@ -669,10 +757,20 @@ function Settings({ onSettingsChange }) {
                     padding: 6px 12px;
                     border-radius: 20px;
                     font-size: 12px;
+                    position: relative;
+                }
+
+                .pair-tag.primary {
+                    background: #28a745;
+                }
+
+                .pair-tag small {
+                    font-size: 10px;
+                    opacity: 0.8;
                 }
 
                 .remove-btn {
-                    background: none;
+                    background: rgba(255, 255, 255, 0.2);
                     border: none;
                     color: white;
                     font-size: 16px;
@@ -685,6 +783,10 @@ function Settings({ onSettingsChange }) {
                     display: flex;
                     align-items: center;
                     justify-content: center;
+                }
+
+                .remove-btn:hover {
+                    background: rgba(255, 255, 255, 0.3);
                 }
 
                 .popular-pairs {
@@ -755,6 +857,29 @@ function Settings({ onSettingsChange }) {
                     font-size: 11px;
                 }
 
+                .config-loading {
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    gap: 15px;
+                    padding: 40px;
+                    color: var(--text-muted);
+                }
+
+                .spinner {
+                    width: 30px;
+                    height: 30px;
+                    border: 3px solid var(--border-primary);
+                    border-top: 3px solid var(--accent-primary);
+                    border-radius: 50%;
+                    animation: spin 1s linear infinite;
+                }
+
+                @keyframes spin {
+                    0% { transform: rotate(0deg); }
+                    100% { transform: rotate(360deg); }
+                }
+
                 .config-summary {
                     display: grid;
                     grid-template-columns: 1fr 1fr;
@@ -813,7 +938,7 @@ function Settings({ onSettingsChange }) {
                     border: 1px solid var(--border-primary);
                 }
 
-                .btn-secondary:hover {
+                .btn-secondary:hover:not(:disabled) {
                     background: var(--bg-secondary);
                 }
 
@@ -855,25 +980,6 @@ function Settings({ onSettingsChange }) {
                     border: 1px solid #f5c6cb;
                 }
 
-                .message {
-                    margin-top: 20px;
-                    padding: 15px;
-                    border-radius: 6px;
-                    font-size: 14px;
-                }
-
-                .message.success {
-                    background: #d4edda;
-                    color: #155724;
-                    border: 1px solid #c3e6cb;
-                }
-
-                .message.error {
-                    background: #f8d7da;
-                    color: #721c24;
-                    border: 1px solid #f5c6cb;
-                }
-
                 .warning {
                     background: #fff3cd;
                     color: #856404;
@@ -897,9 +1003,10 @@ function Settings({ onSettingsChange }) {
                         flex-direction: column;
                     }
                 }
-            `}</style>
+               `}</style>
         </div>
     );
 }
 
 export default Settings;
+

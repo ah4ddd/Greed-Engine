@@ -350,14 +350,7 @@ function BotControls({ settings, botStatus, onRefresh }) {
             }, updateInterval);
             return () => clearInterval(interval);
         }
-
-    }, [
-        botStatus.running,
-        fetchStrategyData,
-        fetchPerformanceStats,
-        currentConfig.aggressive_mode,
-        currentConfig.super_aggressive_mode
-    ]);
+    }, [botStatus.running, fetchStrategyData, fetchPerformanceStats]);
 
     const startBot = async () => {
         // Enhanced validation using currentConfig

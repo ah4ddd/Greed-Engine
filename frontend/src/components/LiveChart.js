@@ -1,295 +1,369 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceDot } from 'recharts';
-import axios from 'axios';
+import React, { useState, useEffect } from 'react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceDot } from 'recharts';
 
-function LiveChart({ symbol, trades }) {
+function LiveChart({ symbol = 'BTC/USDT', trades = [] }) {
     const [chartData, setChartData] = useState([]);
-    const [currentPrice, setCurrentPrice] = useState(0);
-    const [priceChange, setPriceChange] = useState(0);
-    const [isLoading, setIsLoading] = useState(true);
-    const [marketData, setMarketData] = useState({});
-    const [recentTrade, setRecentTrade] = useState(null);
-    const intervalRef = useRef();
-
-    const fetchRealMarketData = useCallback(async () => {
-        try {
-            // Fetch real Bitcoin market data
-            const response = await fetch('https://api.coingecko.com/api/v3/coins/bitcoin');
-            const data = await response.json();
-
-            setMarketData({
-                volume: `$${(data.market_data.total_volume.usd / 1e9).toFixed(1)}B`,
-                marketCap: `$${(data.market_data.market_cap.usd / 1e12).toFixed(2)}T`,
-                supply: `${(data.market_data.circulating_supply / 1e6).toFixed(1)}M BTC`
-            });
-        } catch (error) {
-            console.log('Using fallback market data');
-            setMarketData({
-                volume: '$28.5B',
-                marketCap: '$1.15T',
-                supply: '19.7M BTC'
-            });
-        }
-    }, []);
-
-    const updateChart = useCallback(async () => {
-        try {
-            const response = await axios.get(`/api/ohlcv?symbol=${symbol}&timeframe=1m&limit=50`);
-            const newData = response.data.data.map((candle, index) => ({
-                time: new Date(candle.timestamp).toLocaleTimeString(),
-                price: candle.close,
-                open: candle.open,
-                high: candle.high,
-                low: candle.low,
-                volume: candle.volume,
-                timestamp: candle.timestamp,
-                index: index
-            }));
-
-            setChartData(newData);
-
-            if (newData.length > 1) {
-                const current = newData[newData.length - 1].price;
-                const previous = newData[newData.length - 2].price;
-                setCurrentPrice(current);
-                setPriceChange(((current - previous) / previous * 100));
-            }
-
-            if (isLoading) setIsLoading(false);
-        } catch (error) {
-            console.error('Error fetching OHLCV data:', error);
-
-            // Generate realistic Bitcoin-like demo data
-            const generateBitcoinData = () => {
-                const basePrice = 58500;
-                return Array.from({ length: 40 }, (_, i) => {
-                    const volatility = 150;
-                    const trend = Math.sin(i * 0.03) * 800;
-                    const noise = (Math.random() - 0.5) * volatility;
-                    const price = basePrice + trend + noise + (i * 5);
-
-                    return {
-                        time: new Date(Date.now() - (40 - i) * 60000).toLocaleTimeString(),
-                        price: price,
-                        open: price + (Math.random() - 0.5) * 50,
-                        high: price + Math.random() * 100,
-                        low: price - Math.random() * 100,
-                        volume: Math.random() * 1000,
-                        timestamp: Date.now() - (40 - i) * 60000,
-                        index: i
-                    };
-                });
-            };
-
-            const demoData = generateBitcoinData();
-            setChartData(demoData);
-            setCurrentPrice(demoData[demoData.length - 1].price);
-            setPriceChange(Math.random() * 2 - 0.5);
-            setIsLoading(false);
-        }
-    }, [symbol, isLoading]);
-
-    // Detect new trades and show animation
-    useEffect(() => {
-        if (trades.length > 0) {
-            const latestTrade = trades[trades.length - 1];
-            const tradeTime = new Date(latestTrade.timestamp).getTime();
-            const now = Date.now();
-
-            // If trade is within last 10 seconds, show animation
-            if (now - tradeTime < 10000) {
-                setRecentTrade(latestTrade);
-                setTimeout(() => setRecentTrade(null), 5000); // Hide after 5 seconds
-            }
-        }
-    }, [trades]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+    const [currentPrice, setCurrentPrice] = useState(null);
 
     useEffect(() => {
-        updateChart();
-        fetchRealMarketData();
-        intervalRef.current = setInterval(() => {
-            updateChart();
-            fetchRealMarketData();
-        }, 20000);
+        console.log('LiveChart received symbol:', symbol);
+        if (symbol) {
+            fetchChartData();
+            const interval = setInterval(fetchChartData, 30000);
+            return () => clearInterval(interval);
+        }
+    }, [symbol]);
 
-        return () => {
-            if (intervalRef.current) clearInterval(intervalRef.current);
+    const fetchChartData = async () => {
+        if (!symbol) return;
+
+        setLoading(true);
+        setError(null);
+
+        try {
+            console.log('LiveChart fetching data for symbol:', symbol);
+
+            // Fetch both OHLCV data and current price
+            const [ohlcvResponse, priceResponse] = await Promise.all([
+                fetch(`/api/ohlcv?symbol=${encodeURIComponent(symbol)}&timeframe=1h&limit=24`),
+                fetch(`/api/current-price?symbol=${encodeURIComponent(symbol)}`)
+            ]);
+
+            if (!ohlcvResponse.ok) {
+                console.warn(`OHLCV fetch failed for ${symbol}, using demo data`);
+                generateDemoData();
+                return;
+            }
+
+            const ohlcvData = await ohlcvResponse.json();
+
+            if (priceResponse.ok) {
+                const priceData = await priceResponse.json();
+                setCurrentPrice(priceData.price);
+                console.log('LiveChart fetched current price for', symbol, ':', priceData.price);
+            }
+
+            if (ohlcvData.data && ohlcvData.data.length > 0) {
+                const chartPoints = ohlcvData.data.map((candle, index) => ({
+                    time: new Date(candle.timestamp).toLocaleTimeString([], {
+                        hour: '2-digit',
+                        minute: '2-digit'
+                    }),
+                    price: parseFloat(candle.close),
+                    volume: parseFloat(candle.volume),
+                    timestamp: candle.timestamp,
+                    index: index
+                }));
+
+                setChartData(chartPoints);
+                console.log('LiveChart updated with', chartPoints.length, 'data points for', symbol);
+            } else {
+                console.warn('No chart data received, using demo data');
+                generateDemoData();
+            }
+        } catch (err) {
+            console.error('Error fetching chart data for', symbol, ':', err);
+            setError(err.message);
+            generateDemoData();
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const generateDemoData = () => {
+        const symbolBase = symbol.split('/')[0] || 'DEMO';
+        let basePrice = 100;
+
+        // Set realistic base prices for different cryptocurrencies
+        const priceMap = {
+            'BTC': 58000,
+            'ETH': 3500,
+            'ADA': 0.5,
+            'SOL': 150,
+            'DOT': 25,
+            'MATIC': 1.2,
+            'AVAX': 35,
+            'LINK': 15,
+            'UNI': 8,
+            'ATOM': 12,
+            'LTC': 95,
+            'XRP': 0.6,
+            'DOGE': 0.08,
+            'BNB': 320,
+            'TRX': 0.12
         };
-    }, [updateChart, fetchRealMarketData]);
 
+        basePrice = priceMap[symbolBase] || 100;
+
+        const demoData = Array.from({ length: 24 }, (_, i) => {
+            const volatility = basePrice * 0.002;
+            const trend = Math.sin(i * 0.1) * (basePrice * 0.01);
+            const price = basePrice + trend + (Math.random() - 0.5) * volatility;
+
+            return {
+                time: new Date(Date.now() - (24 - i) * 3600000).toLocaleTimeString([], {
+                    hour: '2-digit',
+                    minute: '2-digit'
+                }),
+                price: parseFloat(price.toFixed(2)),
+                volume: Math.random() * 1000000,
+                timestamp: Date.now() - (24 - i) * 3600000,
+                index: i
+            };
+        });
+
+        setChartData(demoData);
+        setCurrentPrice(demoData[demoData.length - 1].price);
+        setError('Using simulated data - API data unavailable');
+        console.log('LiveChart generated demo data for', symbol, 'with base price:', basePrice);
+    };
+
+    // Get trade markers for visualization
     const getTradeMarkers = () => {
-        if (!trades || trades.length === 0) return [];
+        if (!trades || trades.length === 0 || !chartData || chartData.length === 0) {
+            return [];
+        }
 
-        return trades.slice(-5).map((trade, index) => {
-            const tradeTime = new Date(trade.timestamp).toLocaleTimeString();
-            const dataPoint = chartData.find(d => d.time === tradeTime);
+        return trades
+            .filter(trade => trade.symbol === symbol)
+            .map(trade => {
+                const tradeTime = new Date(trade.timestamp).toLocaleTimeString([], {
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+                const chartPoint = chartData.find(point => point.time === tradeTime);
 
-            if (dataPoint) {
-                return {
-                    x: dataPoint.index,
-                    y: trade.price,
-                    trade: trade
-                };
-            }
-            return null;
-        }).filter(Boolean);
+                if (chartPoint) {
+                    return {
+                        x: chartPoint.index,
+                        y: trade.price,
+                        trade: trade,
+                        time: tradeTime
+                    };
+                }
+                return null;
+            })
+            .filter(Boolean);
     };
 
     const CustomTooltip = ({ active, payload, label }) => {
         if (active && payload && payload.length) {
             const data = payload[0].payload;
             return (
-                <div className="custom-tooltip">
-                    <p className="tooltip-time">{label}</p>
-                    <p className="tooltip-price">Price: ${data.price.toFixed(2)}</p>
-                    <p className="tooltip-high">High: ${data.high.toFixed(2)}</p>
-                    <p className="tooltip-low">Low: ${data.low.toFixed(2)}</p>
+                <div style={{
+                    background: 'var(--bg-primary)',
+                    border: '1px solid var(--border-primary)',
+                    borderRadius: '4px',
+                    padding: '10px',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.15)'
+                }}>
+                    <p style={{ margin: '0 0 5px 0', fontWeight: 'bold', color: 'var(--text-primary)' }}>
+                        {label}
+                    </p>
+                    <p style={{ margin: '2px 0', fontSize: '12px', color: 'var(--text-muted)' }}>
+                        Price: ${data.price?.toFixed(2)}
+                    </p>
+                    <p style={{ margin: '2px 0', fontSize: '12px', color: 'var(--text-muted)' }}>
+                        Volume: {(data.volume / 1000).toFixed(0)}K
+                    </p>
                 </div>
             );
         }
         return null;
     };
 
-    if (isLoading) {
+    const tradeMarkers = getTradeMarkers();
+    const symbolBase = symbol.split('/')[0] || 'Unknown';
+
+    if (loading && chartData.length === 0) {
         return (
-            <div className="live-chart">
-                <div className="chart-header">
-                    <h3>{symbol} Live Chart</h3>
-                    <div className="loading">Loading market data...</div>
-                </div>
-                <div className="chart-loading">
-                    <div className="loading-spinner"></div>
+            <div style={{
+                background: 'var(--bg-secondary)',
+                border: '1px solid var(--border-primary)',
+                borderRadius: '8px',
+                padding: '20px',
+                margin: '20px 0'
+            }}>
+                <h3 style={{ color: 'var(--text-primary)', margin: '0 0 20px 0', fontSize: '18px' }}>
+                    Live Price Chart - {symbol}
+                </h3>
+                <div style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    height: '300px',
+                    color: 'var(--text-muted)'
+                }}>
+                    <div style={{
+                        width: '40px',
+                        height: '40px',
+                        border: '4px solid var(--border-primary)',
+                        borderLeft: '4px solid var(--accent-primary)',
+                        borderRadius: '50%',
+                        animation: 'spin 1s linear infinite',
+                        marginBottom: '15px'
+                    }}></div>
+                    <p>Loading {symbolBase} price data...</p>
                 </div>
             </div>
         );
     }
 
     return (
-        <div className="live-chart">
-            {/* Recent Trade Alert */}
-            {recentTrade && (
-                <div className={`trade-alert ${recentTrade.side}`}>
-                    <div className="alert-content">
-                        <span className="alert-icon">
-                            {recentTrade.side === 'buy' ? '📈' : '📉'}
-                        </span>
-                        <span className="alert-text">
-                            {recentTrade.side.toUpperCase()} executed at ${recentTrade.price?.toFixed(2)}
-                        </span>
-                        <span className="alert-pnl">
-                            P&L: {recentTrade.pnl >= 0 ? '+' : ''}${recentTrade.pnl?.toFixed(2)}
-                        </span>
-                    </div>
-                </div>
-            )}
-
-            <div className="chart-header">
-                <div className="chart-title">
-                    <h3>{symbol}</h3>
-                    <span className="chart-subtitle">Live Price Chart</span>
-                </div>
-                <div className="price-info">
-                    <div className="current-price">
-                        ${currentPrice.toFixed(2)}
-                    </div>
-                    <div className={`price-change ${priceChange >= 0 ? 'positive' : 'negative'}`}>
-                        {priceChange >= 0 ? '▲' : '▼'} {Math.abs(priceChange).toFixed(2)}%
-                    </div>
+        <div style={{
+            background: 'var(--bg-secondary)',
+            border: '1px solid var(--border-primary)',
+            borderRadius: '8px',
+            padding: '20px',
+            margin: '20px 0'
+        }}>
+            <div style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginBottom: '20px',
+                flexWrap: 'wrap',
+                gap: '10px'
+            }}>
+                <h3 style={{ color: 'var(--text-primary)', margin: '0', fontSize: '18px' }}>
+                    Live Price Chart - {symbol}
+                </h3>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+                    {currentPrice && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span style={{ fontSize: '14px', color: 'var(--text-muted)' }}>Current:</span>
+                            <span style={{
+                                fontSize: '18px',
+                                fontWeight: 'bold',
+                                color: 'var(--accent-primary)'
+                            }}>
+                                ${currentPrice.toFixed(2)}
+                            </span>
+                        </div>
+                    )}
+                    {error && (
+                        <div style={{
+                            background: '#fff3cd',
+                            color: '#856404',
+                            padding: '5px 10px',
+                            borderRadius: '4px',
+                            fontSize: '12px'
+                        }}>
+                            ⚠️ {error}
+                        </div>
+                    )}
                 </div>
             </div>
 
-            <div className="chart-container">
-                <ResponsiveContainer width="100%" height={400}>
-                    <AreaChart data={chartData}>
-                        <defs>
-                            <linearGradient id="colorPrice" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="5%" stopColor="#00d4ff" stopOpacity={0.4} />
-                                <stop offset="95%" stopColor="#00d4ff" stopOpacity={0.0} />
-                            </linearGradient>
-                        </defs>
-                        <CartesianGrid strokeDasharray="1 1" stroke="#2d2f36" />
-                        <XAxis
-                            dataKey="time"
-                            stroke="#8b949e"
-                            tick={{ fontSize: 11 }}
-                            axisLine={{ stroke: '#2d2f36' }}
-                        />
-                        <YAxis
-                            stroke="#8b949e"
-                            tick={{ fontSize: 11 }}
-                            tickFormatter={(value) => `$${value.toLocaleString()}`}
-                            axisLine={{ stroke: '#2d2f36' }}
-                            domain={['dataMin - 200', 'dataMax + 200']}
-                        />
-                        <Tooltip content={<CustomTooltip />} />
-
-                        <Area
-                            type="monotone"
-                            dataKey="price"
-                            stroke="#00d4ff"
-                            strokeWidth={2}
-                            fillOpacity={1}
-                            fill="url(#colorPrice)"
-                            dot={false}
-                            activeDot={{ r: 4, fill: '#00d4ff', stroke: '#ffffff', strokeWidth: 2 }}
-                        />
-
-                        {/* Trade Markers */}
-                        {getTradeMarkers().map((marker, index) => (
-                            <ReferenceDot
-                                key={index}
-                                x={marker.x}
-                                y={marker.y}
-                                r={6}
-                                fill={marker.trade.side === 'buy' ? '#26d665' : '#ff6b6b'}
-                                stroke="#ffffff"
-                                strokeWidth={2}
+            <div style={{ marginBottom: '15px', minHeight: '300px' }}>
+                {chartData.length > 0 ? (
+                    <ResponsiveContainer width="100%" height={300}>
+                        <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="var(--border-primary)" />
+                            <XAxis
+                                dataKey="time"
+                                stroke="var(--text-muted)"
+                                tick={{ fontSize: 12, fill: 'var(--text-muted)' }}
+                                interval="preserveStartEnd"
                             />
-                        ))}
-                    </AreaChart>
-                </ResponsiveContainer>
+                            <YAxis
+                                stroke="var(--text-muted)"
+                                tick={{ fontSize: 12, fill: 'var(--text-muted)' }}
+                                tickFormatter={(value) => `$${value.toFixed(0)}`}
+                                domain={['dataMin - 20', 'dataMax + 20']}
+                            />
+                            <Tooltip content={<CustomTooltip />} />
+
+                            <Line
+                                type="monotone"
+                                dataKey="price"
+                                stroke="var(--accent-primary)"
+                                strokeWidth={2}
+                                dot={false}
+                                name={`${symbolBase} Price`}
+                                connectNulls={false}
+                            />
+
+                            {tradeMarkers.map((marker, index) => (
+                                <ReferenceDot
+                                    key={`trade-${index}`}
+                                    x={marker.x}
+                                    y={marker.y}
+                                    r={5}
+                                    fill={marker.trade.side === 'buy' ? '#28a745' : '#dc3545'}
+                                    stroke="#ffffff"
+                                    strokeWidth={2}
+                                />
+                            ))}
+                        </LineChart>
+                    </ResponsiveContainer>
+                ) : (
+                    <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        height: '300px',
+                        color: 'var(--text-muted)',
+                        fontSize: '16px'
+                    }}>
+                        No chart data available for {symbol}
+                    </div>
+                )}
             </div>
 
-            <div className="market-indicators">
-                <div className="indicator">
-                    <span className="indicator-label">24h Volume</span>
-                    <span className="indicator-value">{marketData.volume || 'Loading...'}</span>
-                </div>
-                <div className="indicator">
-                    <span className="indicator-label">Market Cap</span>
-                    <span className="indicator-value">{marketData.marketCap || 'Loading...'}</span>
-                </div>
-                <div className="indicator">
-                    <span className="indicator-label">Circulating Supply</span>
-                    <span className="indicator-value">{marketData.supply || 'Loading...'}</span>
-                </div>
-            </div>
-
-            {/* Recent Signals - FIXED TO SHOW ACTUAL LATEST TRADES */}
-            {trades && trades.length > 0 && (
-                <div className="recent-signals">
-                    <h4>Recent Signals</h4>
-                    <div className="signals-container">
-                        {/* Use the trades passed from Dashboard (already sorted latest first) */}
-                        {trades.slice(0, 4).map((trade, index) => (
-                            <div key={trade.id || `${trade.timestamp}-${index}`} className={`signal-pill ${trade.side} ${trade.pnl < 0 ? 'loss-signal' : 'profit-signal'}`}>
-                                <span className="signal-icon">
-                                    {trade.side === 'buy' ? '🟢' : '🔴'}
-                                </span>
-                                <span className="signal-text">
-                                    {trade.side.toUpperCase()} ${trade.price?.toFixed(2)}
-                                </span>
-                                <span className={`signal-pnl ${trade.pnl >= 0 ? 'profit' : 'loss'}`}>
-                                    {trade.pnl >= 0 ? `+$${trade.pnl.toFixed(2)}` : `$${trade.pnl.toFixed(2)}`}
-                                </span>
-                                <span className="signal-time">
-                                    {new Date(trade.timestamp).toLocaleTimeString()}
-                                </span>
-                            </div>
-                        ))}
+            {tradeMarkers.length > 0 && (
+                <div style={{
+                    display: 'flex',
+                    justifyContent: 'center',
+                    gap: '20px',
+                    marginTop: '10px'
+                }}>
+                    <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        fontSize: '12px',
+                        color: 'var(--text-muted)'
+                    }}>
+                        <span style={{
+                            width: '12px',
+                            height: '12px',
+                            borderRadius: '50%',
+                            backgroundColor: '#28a745',
+                            border: '2px solid #ffffff'
+                        }}></span>
+                        <span>Buy Orders</span>
+                    </div>
+                    <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        fontSize: '12px',
+                        color: 'var(--text-muted)'
+                    }}>
+                        <span style={{
+                            width: '12px',
+                            height: '12px',
+                            borderRadius: '50%',
+                            backgroundColor: '#dc3545',
+                            border: '2px solid #ffffff'
+                        }}></span>
+                        <span>Sell Orders</span>
                     </div>
                 </div>
             )}
+
+            <style>
+                {`
+                    @keyframes spin {
+                        0% { transform: rotate(0deg); }
+                        100% { transform: rotate(360deg); }
+                    }
+                `}
+            </style>
         </div>
     );
 }

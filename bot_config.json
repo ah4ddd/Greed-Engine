@@ -7,14 +7,14 @@
   "symbols": [
     "BTC/USDT",
     "ETH/USDT",
-    "ADA/USDT"
+    "SOL/USDT"
   ],
   "trading_mode": "spot",
   "leverage": 3,
   "kill_switch_threshold": 5,
-  "multi_pair_mode": false,
-  "aggressive_mode": true,
-  "super_aggressive_mode": false,
+  "multi_pair_mode": true,
+  "aggressive_mode": false,
+  "super_aggressive_mode": true,
   "trade_amount": 10000,
   "api_key": "",
   "api_secret": "",
