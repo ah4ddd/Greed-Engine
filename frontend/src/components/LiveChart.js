@@ -7,6 +7,7 @@ function LiveChart({ symbol = 'BTC/USDT', trades = [] }) {
     const [error, setError] = useState(null);
     const [currentPrice, setCurrentPrice] = useState(null);
 
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     useEffect(() => {
         console.log('LiveChart received symbol:', symbol);
         if (symbol) {
