@@ -306,15 +306,6 @@ function BotControls({ settings, botStatus, onRefresh }) {
         return null;
     };
 
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    useEffect(() => {
-        console.log('LiveChart received symbol:', symbol);
-        if (symbol) {
-            fetchChartData();
-            const interval = setInterval(fetchChartData, 30000);
-            return () => clearInterval(interval);
-        }
-    }, [symbol]);
     useEffect(() => {
         if (botStatus.running) {
             const activities = [

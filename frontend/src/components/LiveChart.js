@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceDot } from 'recharts';
 
 function LiveChart({ symbol = 'BTC/USDT', trades = [] }) {
@@ -7,73 +7,8 @@ function LiveChart({ symbol = 'BTC/USDT', trades = [] }) {
     const [error, setError] = useState(null);
     const [currentPrice, setCurrentPrice] = useState(null);
 
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    useEffect(() => {
-        console.log('LiveChart received symbol:', symbol);
-        if (symbol) {
-            fetchChartData();
-            const interval = setInterval(fetchChartData, 30000);
-            return () => clearInterval(interval);
-        }
-    }, [symbol]);
-
-    const fetchChartData = async () => {
-        if (!symbol) return;
-
-        setLoading(true);
-        setError(null);
-
-        try {
-            console.log('LiveChart fetching data for symbol:', symbol);
-
-            // Fetch both OHLCV data and current price
-            const [ohlcvResponse, priceResponse] = await Promise.all([
-                fetch(`/api/ohlcv?symbol=${encodeURIComponent(symbol)}&timeframe=1h&limit=24`),
-                fetch(`/api/current-price?symbol=${encodeURIComponent(symbol)}`)
-            ]);
-
-            if (!ohlcvResponse.ok) {
-                console.warn(`OHLCV fetch failed for ${symbol}, using demo data`);
-                generateDemoData();
-                return;
-            }
-
-            const ohlcvData = await ohlcvResponse.json();
-
-            if (priceResponse.ok) {
-                const priceData = await priceResponse.json();
-                setCurrentPrice(priceData.price);
-                console.log('LiveChart fetched current price for', symbol, ':', priceData.price);
-            }
-
-            if (ohlcvData.data && ohlcvData.data.length > 0) {
-                const chartPoints = ohlcvData.data.map((candle, index) => ({
-                    time: new Date(candle.timestamp).toLocaleTimeString([], {
-                        hour: '2-digit',
-                        minute: '2-digit'
-                    }),
-                    price: parseFloat(candle.close),
-                    volume: parseFloat(candle.volume),
-                    timestamp: candle.timestamp,
-                    index: index
-                }));
-
-                setChartData(chartPoints);
-                console.log('LiveChart updated with', chartPoints.length, 'data points for', symbol);
-            } else {
-                console.warn('No chart data received, using demo data');
-                generateDemoData();
-            }
-        } catch (err) {
-            console.error('Error fetching chart data for', symbol, ':', err);
-            setError(err.message);
-            generateDemoData();
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    const generateDemoData = () => {
+    // ✅ generateDemoData defined first
+    const generateDemoData = useCallback(() => {
         const symbolBase = symbol.split('/')[0] || 'DEMO';
         let basePrice = 100;
 
@@ -119,7 +54,72 @@ function LiveChart({ symbol = 'BTC/USDT', trades = [] }) {
         setCurrentPrice(demoData[demoData.length - 1].price);
         setError('Using simulated data - API data unavailable');
         console.log('LiveChart generated demo data for', symbol, 'with base price:', basePrice);
-    };
+    }, [symbol]);
+
+    // ✅ fetchChartData updated to include generateDemoData in dependency array
+    const fetchChartData = useCallback(async () => {
+        if (!symbol) return;
+
+        setLoading(true);
+        setError(null);
+
+        try {
+            console.log('LiveChart fetching data for symbol:', symbol);
+
+            const [ohlcvResponse, priceResponse] = await Promise.all([
+                fetch(`/api/ohlcv?symbol=${encodeURIComponent(symbol)}&timeframe=1h&limit=24`),
+                fetch(`/api/current-price?symbol=${encodeURIComponent(symbol)}`)
+            ]);
+
+            if (!ohlcvResponse.ok) {
+                console.warn(`OHLCV fetch failed for ${symbol}, using demo data`);
+                generateDemoData();
+                return;
+            }
+
+            const ohlcvData = await ohlcvResponse.json();
+
+            if (priceResponse.ok) {
+                const priceData = await priceResponse.json();
+                setCurrentPrice(priceData.price);
+                console.log('LiveChart fetched current price for', symbol, ':', priceData.price);
+            }
+
+            if (ohlcvData.data && ohlcvData.data.length > 0) {
+                const chartPoints = ohlcvData.data.map((candle, index) => ({
+                    time: new Date(candle.timestamp).toLocaleTimeString([], {
+                        hour: '2-digit',
+                        minute: '2-digit'
+                    }),
+                    price: parseFloat(candle.close),
+                    volume: parseFloat(candle.volume),
+                    timestamp: candle.timestamp,
+                    index: index
+                }));
+
+                setChartData(chartPoints);
+                console.log('LiveChart updated with', chartPoints.length, 'data points for', symbol);
+            } else {
+                console.warn('No chart data received, using demo data');
+                generateDemoData();
+            }
+        } catch (err) {
+            console.error('Error fetching chart data for', symbol, ':', err);
+            setError(err.message);
+            generateDemoData();
+        } finally {
+            setLoading(false);
+        }
+    }, [symbol, generateDemoData]); // ✅ added generateDemoData here
+
+    useEffect(() => {
+        console.log('LiveChart received symbol:', symbol);
+        if (symbol) {
+            fetchChartData();
+            const interval = setInterval(fetchChartData, 30000);
+            return () => clearInterval(interval);
+        }
+    }, [symbol, fetchChartData]);
 
     // Get trade markers for visualization
     const getTradeMarkers = () => {
