@@ -1,2 +1,2 @@
 ...
-will try to make it profitable someday
+will make it profitable someday
